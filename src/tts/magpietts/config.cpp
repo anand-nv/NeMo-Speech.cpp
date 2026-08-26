@@ -22,6 +22,9 @@ MagpieTokenizerSentenceLimits::Register(common::ParameterParser& p) {
     p.Register("zh", &zh, "Mandarin sentence-chunking character threshold");
     p.Register("hi", &hi, "Hindi sentence-chunking word threshold");
     p.Register("ja", &ja, "Japanese sentence-chunking character threshold");
+    p.Register("ar", &ar, "Arabic sentence-chunking word threshold");
+    p.Register("ko", &ko, "Korean sentence-chunking word threshold");
+    p.Register("pt", &pt, "Portuguese sentence-chunking word threshold");
 }
 
 void
@@ -188,7 +191,7 @@ register_runtime_config(common::ParameterParser& p, MagpieRuntimeConfig& c) {
         [&c](const std::string& value) {
             c.sampling_backend = runtime_backend_from_string("tts.sampling-backend", value);
         },
-        "Sampling backend: auto, cpu, or cuda");
+        "Sampling backend: auto (CUDA when compatible with the Magpie/LT path), cpu, or cuda");
     p.Register(
         "uma-mode",
         [&c](const std::string& value) {
@@ -281,7 +284,7 @@ register_stream_params(common::ParameterParser& p, magpie_stream_params& c) {
         [&c](const std::string& value) {
             c.sampling_backend = stream_backend_from_string("tts.sampling-backend", value);
         },
-        "Sampling backend: auto, cpu, or cuda");
+        "Sampling backend: auto (CUDA when compatible with the Magpie/LT path), cpu, or cuda");
     p.Register(
         "uma-mode",
         [&c](const std::string& value) {
