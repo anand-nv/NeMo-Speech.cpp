@@ -98,6 +98,9 @@ option(NEMO_SPEECH_WITH_NMT        "Deprecated alias for NEMO_SPEECH_BUILD_NMT" 
 option(NEMO_SPEECH_WITH_NORM       "Build shared Sparrowhawk/OpenFST text normalization" OFF)
 option(NEMO_SPEECH_TTS_WITH_JA     "Build Japanese MagpieTTS tokenizer support" OFF)
 option(NEMO_SPEECH_TTS_WITH_ZH     "Build Mandarin MagpieTTS tokenizer support" OFF)
+option(NEMO_SPEECH_TTS_WITH_KOKORO "Build the native Kokoro runtime and Misaki tokenizer" OFF)
+set(NEMO_SPEECH_KOKORO_UNIDIC_DIR "" CACHE PATH
+    "Pinned unidic-lite 1.0.8 dicdir used by the native Kokoro Japanese tokenizer")
 option(NEMO_SPEECH_BUILD_ASR       "Build automatic speech recognition" ON)
 option(NEMO_SPEECH_BUILD_DIAR      "Build standalone and ASR-integrated diarization" ON)
 option(NEMO_SPEECH_BUILD_TTS       "Build text-to-speech" ON)
@@ -145,7 +148,8 @@ endif()
 if(NEMO_SPEECH_WITH_FLASHLIGHT AND NOT NEMO_SPEECH_BUILD_ASR)
     message(FATAL_ERROR "NEMO_SPEECH_WITH_FLASHLIGHT requires ASR")
 endif()
-if((NEMO_SPEECH_TTS_WITH_JA OR NEMO_SPEECH_TTS_WITH_ZH) AND
+if((NEMO_SPEECH_TTS_WITH_JA OR NEMO_SPEECH_TTS_WITH_ZH OR
+    NEMO_SPEECH_TTS_WITH_KOKORO) AND
    NOT NEMO_SPEECH_BUILD_TTS)
     message(FATAL_ERROR "Optional TTS tokenizers require NEMO_SPEECH_BUILD_TTS=ON")
 endif()
@@ -492,18 +496,20 @@ if(NEMO_SPEECH_WITH_FLASHLIGHT)
         third_party/kenlm/COPYING.LESSER.3
         DESTINATION "${NEMO_SPEECH_THIRD_PARTY_LICENSE_DIR}/kenlm")
 endif()
-if(NEMO_SPEECH_TTS_WITH_JA)
+if(NEMO_SPEECH_TTS_WITH_JA OR NEMO_SPEECH_TTS_WITH_KOKORO)
     install(FILES
         third_party/open_jtalk/src/COPYING
         DESTINATION "${NEMO_SPEECH_THIRD_PARTY_LICENSE_DIR}/open_jtalk")
     install(FILES
         third_party/open_jtalk/src/mecab/COPYING
         DESTINATION "${NEMO_SPEECH_THIRD_PARTY_LICENSE_DIR}/mecab")
-    install(FILES
-        third_party/open_jtalk/src/mecab-naist-jdic/COPYING
-        DESTINATION "${NEMO_SPEECH_THIRD_PARTY_LICENSE_DIR}/naist-jdic")
+    if(NEMO_SPEECH_TTS_WITH_JA)
+        install(FILES
+            third_party/open_jtalk/src/mecab-naist-jdic/COPYING
+            DESTINATION "${NEMO_SPEECH_THIRD_PARTY_LICENSE_DIR}/naist-jdic")
+    endif()
 endif()
-if(NEMO_SPEECH_TTS_WITH_ZH)
+if(NEMO_SPEECH_TTS_WITH_ZH OR NEMO_SPEECH_TTS_WITH_KOKORO)
     install(FILES third_party/cppjieba/LICENSE
         DESTINATION "${NEMO_SPEECH_THIRD_PARTY_LICENSE_DIR}/cppjieba")
     install(FILES third_party/cppjieba/deps/limonp/LICENSE

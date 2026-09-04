@@ -15,6 +15,11 @@
 
 namespace nemo_speech::tts {
 
+enum class TtsModelFamily {
+    Magpie,
+    Kokoro,
+};
+
 struct SynthesizerConfig {
     MagpieRuntimeConfig runtime;
     std::string tokenizer_model_dir;
@@ -22,6 +27,8 @@ struct SynthesizerConfig {
     MagpieTokenizerConfig tokenizer;
     std::string default_language_code = "en-US";
     std::string default_voice_name;
+    TtsModelFamily family = TtsModelFamily::Magpie;
+    std::string kokoro_model;
 };
 
 struct SynthesisRequest {
@@ -50,6 +57,8 @@ struct PreparedSynthesis {
     MagpieSynthesisOptions options;
     double normalizer_ms = 0.0;
     double tokenizer_ms = 0.0;
+    TtsModelFamily family = TtsModelFamily::Magpie;
+    std::string voice_name;
 };
 
 struct SynthesisResult {
@@ -74,7 +83,8 @@ class Synthesizer {
     SynthesisResult synthesize(const SynthesisRequest& request, const PcmCallback& callback = {});
     SynthesisResult synthesize_tokens(
         const std::vector<int32_t>& tokens, const MagpieSynthesisOptions& options = {},
-        int output_sample_rate = 0, const PcmCallback& callback = {});
+        int output_sample_rate = 0, const PcmCallback& callback = {},
+        const std::string& voice_name = {}, const std::string& language_code = {});
 
     // Initialize lazy runtime state through the normal synthesis path.
     SynthesisResult warmup(const std::string& text, int steps = -1);
@@ -82,6 +92,7 @@ class Synthesizer {
     int sample_rate() const;
     int speaker_count() const;
     const std::vector<std::string>& speaker_names() const;
+    std::vector<std::string> speaker_names_for_language(const std::string& language_code) const;
     std::vector<std::string> supported_language_codes() const;
     const std::string& model_name() const;
     const std::string& default_language_code() const;

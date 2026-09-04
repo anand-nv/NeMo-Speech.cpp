@@ -69,6 +69,7 @@ print_synthesize_help(const char* program) {
         "  --tokenizer-dir MODEL     Tokenizer directory or indexed HF repo\n"
         "                            (default: MagpieTTS repository)\n"
         "  --tn-model-dir DIR        Optional text-normalization grammars\n"
+        "  --kokoro-model MODEL      Self-contained Kokoro GGUF (selects Kokoro)\n"
         "  -i, --input PATH          Read text from a UTF-8 file\n"
         "  -o, --output PATH         Output path (default: speech.wav; '-' = stdout)\n"
         "  --format wav|pcm          WAV container or raw signed PCM16\n"
@@ -78,6 +79,7 @@ print_synthesize_help(const char* program) {
         "  --sample-rate HZ          Output rate (8 kHz through model rate)\n"
         "  --device, --backend DEVICE\n"
         "                            auto, cpu, cuda[:N], metal, or vulkan[:N]\n"
+        "  --speed N                 Kokoro speed, 0.5 through 2.0\n"
         "  --seed N --steps N --top-k N --temperature N --cfg-scale N\n"
         "  --config FILE             Load the complete TTS YAML config tree\n"
         "  --tts.KEY VALUE           Override any C++ TTS setting\n"
@@ -109,6 +111,7 @@ command_synthesize(int argc, char** argv) {
         parser.ApplyEnv("NEMO_SPEECH");
 
         std::string text, input_path, output_path = "speech.wav", language, voice;
+        std::string kokoro_model = parsed.kokoro_model;
         std::string format = "wav";
         bool force = false;
         bool warmup = true;
@@ -130,6 +133,8 @@ command_synthesize(int argc, char** argv) {
                 parsed.runtime.magpie_model = value(i, arg);
             else if (arg == "--codec-model")
                 parsed.runtime.codec_model = value(i, arg);
+            else if (arg == "--kokoro-model")
+                kokoro_model = value(i, arg);
             else if (arg == "--tokenizer-dir")
                 parsed.tokenizer_model_dir = value(i, arg);
             else if (arg == "--tn-model-dir")
@@ -154,7 +159,10 @@ command_synthesize(int argc, char** argv) {
                 device_set = true;
             } else if (arg == "--seed")
                 request_options.seed = parse_int(value(i, arg), arg, -1, 2147483647);
-            else if (arg == "--steps")
+            else if (arg == "--speed") {
+                request_options.speed = static_cast<float>(parse_double(value(i, arg), arg));
+                request_options.override_speed = true;
+            } else if (arg == "--steps")
                 request_options.steps = parse_int(value(i, arg), arg, 1, 1000000);
             else if (arg == "--top-k")
                 request_options.top_k = parse_int(value(i, arg), arg, 1, 1000000);
@@ -191,16 +199,21 @@ command_synthesize(int argc, char** argv) {
         if (cli_json() && output_path == "-")
             throw std::invalid_argument("--json cannot be combined with --output -");
 
-        parsed.runtime.magpie_model =
-            resolve_model_file(parsed.runtime.magpie_model, "tts", "MagpieTTS model").string();
-        parsed.runtime.codec_model =
-            resolve_model_file(parsed.runtime.codec_model, "codec", "NanoCodec model").string();
-        parsed.tokenizer_model_dir =
-            resolve_model_directory(parsed.tokenizer_model_dir, "tokenizer", "tokenizer model")
-                .string();
-        if (!parsed.tn_model_dir.empty())
-            parsed.tn_model_dir =
-                require_model_directory(parsed.tn_model_dir, "text normalization model").string();
+        if (kokoro_model.empty()) {
+            parsed.runtime.magpie_model =
+                resolve_model_file(parsed.runtime.magpie_model, "tts", "MagpieTTS model").string();
+            parsed.runtime.codec_model =
+                resolve_model_file(parsed.runtime.codec_model, "codec", "NanoCodec model").string();
+            parsed.tokenizer_model_dir =
+                resolve_model_directory(parsed.tokenizer_model_dir, "tokenizer", "tokenizer model")
+                    .string();
+            if (!parsed.tn_model_dir.empty())
+                parsed.tn_model_dir =
+                    require_model_directory(parsed.tn_model_dir, "text normalization model")
+                        .string();
+        } else {
+            kokoro_model = require_model_file(kokoro_model, "Kokoro model").string();
+        }
         if (device_set) {
             bool cuda_device = device_name == "cuda" || device_name.rfind("cuda:", 0) == 0;
 #if defined(NEMO_SPEECH_CLI_CUDA)
@@ -230,6 +243,10 @@ command_synthesize(int argc, char** argv) {
         config.tokenizer = parsed.tokenizer_config;
         config.default_language_code = parsed.default_language_code;
         config.default_voice_name = parsed.default_voice_name;
+        if (!kokoro_model.empty()) {
+            config.family = nemo_speech::tts::TtsModelFamily::Kokoro;
+            config.kokoro_model = std::move(kokoro_model);
+        }
         nemo_speech::EngineRegistry engines;
         auto synthesizer = engines.load_tts(std::move(config));
         if (warmup)

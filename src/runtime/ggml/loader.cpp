@@ -238,6 +238,12 @@ GGUFLoader::GGUFLoader(const std::string& path) {
         for (struct ggml_tensor* t = ggml_get_first_tensor(ctx); t != nullptr;
              t = ggml_get_next_tensor(ctx, t)) {
             m_tensor_n_dims[t->name] = ggml_n_dims(t);
+            std::vector<int64_t> shape;
+            shape.reserve(static_cast<size_t>(ggml_n_dims(t)));
+            for (int dimension = 0; dimension < ggml_n_dims(t); ++dimension) {
+                shape.push_back(t->ne[dimension]);
+            }
+            m_tensor_shapes[t->name] = std::move(shape);
         }
         ggml_free(ctx);
     }
@@ -246,7 +252,7 @@ GGUFLoader::GGUFLoader(const std::string& path) {
     GGMLF_LOG_INFO("GGUF file size: %ld\n", m_file->size);
 
     auto n_tensors = gguf_get_n_tensors(m_context.get());
-    GGMLF_LOG_INFO("GGUF has %d tensors\n", n_tensors);
+    GGMLF_LOG_INFO("GGUF has %lld tensors\n", static_cast<long long>(n_tensors));
 
     const uint64_t data_offset = gguf_get_data_offset(m_context.get());
     // Pre-size the reusable read buffer; get_tensor_file_data grows it if needed.
@@ -301,7 +307,7 @@ GGUFLoader::get_tensor_file_data(const std::string& tensor_name, size_t size) {
 }
 
 ggml_type
-GGUFLoader::get_tensor_type(const std::string& tensor_name) {
+GGUFLoader::get_tensor_type(const std::string& tensor_name) const {
     auto it = m_tensor_infos.find(tensor_name);
     if (it == m_tensor_infos.end()) {
         throw std::runtime_error("Tensor not found: " + tensor_name);
@@ -319,6 +325,26 @@ int
 GGUFLoader::get_tensor_n_dims(const std::string& tensor_name) const {
     auto it = m_tensor_n_dims.find(tensor_name);
     return it == m_tensor_n_dims.end() ? 0 : it->second;
+}
+
+std::vector<int64_t>
+GGUFLoader::get_tensor_shape(const std::string& tensor_name) const {
+    auto it = m_tensor_shapes.find(tensor_name);
+    if (it == m_tensor_shapes.end()) {
+        throw std::runtime_error("Tensor not found: " + tensor_name);
+    }
+    return it->second;
+}
+
+std::vector<std::string>
+GGUFLoader::get_tensor_names() const {
+    std::vector<std::string> names;
+    names.reserve(m_tensor_infos.size());
+    for (const auto& [name, unused] : m_tensor_infos) {
+        (void)unused;
+        names.push_back(name);
+    }
+    return names;
 }
 
 bool

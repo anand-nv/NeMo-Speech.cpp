@@ -68,9 +68,14 @@ class GGUFLoader {
     const char* get_tensor_file_data(const std::string& tensor_name, size_t size);
     // Releases file-backed resources while retaining metadata; tensor reads reopen on demand.
     void release_file_resources();
-    ggml_type get_tensor_type(const std::string& tensor_name);
-    // Returns the on-disk rank (1-4), or 0 when the tensor is absent.
+    ggml_type get_tensor_type(const std::string& tensor_name) const;
+    // Returns GGML's effective rank (trailing unit dimensions are omitted), or
+    // 0 when the tensor is absent.
     int get_tensor_n_dims(const std::string& tensor_name) const;
+    // Returns effective GGML dimensions in ne[] order (the reverse of
+    // NumPy/PyTorch shape order, with trailing unit dimensions omitted).
+    std::vector<int64_t> get_tensor_shape(const std::string& tensor_name) const;
+    std::vector<std::string> get_tensor_names() const;
     bool has_tensor(const std::string& tensor_name) const;
 
     // Metadata accessors (return `def` if key missing).
@@ -90,6 +95,7 @@ class GGUFLoader {
     std::map<std::string, std::tuple<ggml_type, uint64_t>> m_tensor_infos;
     // Per-tensor on-disk dimensionality.
     std::map<std::string, int> m_tensor_n_dims;
+    std::map<std::string, std::vector<int64_t>> m_tensor_shapes;
     std::vector<char> m_tensor_buffer;
 };
 

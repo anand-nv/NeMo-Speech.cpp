@@ -130,8 +130,9 @@ asr_configured(const AsrServerConfig& cfg) {
 
 bool
 tts_configured(const TtsServerConfig& cfg) {
-    return !cfg.server.runtime.magpie_model.empty() && !cfg.server.runtime.codec_model.empty() &&
-           !cfg.server.tokenizer_model_dir.empty();
+    return !cfg.server.kokoro_model.empty() ||
+           (!cfg.server.runtime.magpie_model.empty() && !cfg.server.runtime.codec_model.empty() &&
+            !cfg.server.tokenizer_model_dir.empty());
 }
 
 #if defined(NEMO_SPEECH_BUILD_NMT)
@@ -162,6 +163,7 @@ print_usage(const char* prog) {
     std::cerr << "Usage: " << prog << " [--asr.model.path ASR.gguf] "
               << "[--tts.magpie-model TTS.gguf --tts.codec-model CODEC.gguf "
               << "--tts.tokenizer-model-dir DIR] [--bind HOST:PORT] [--config FILE.yaml]\n"
+              << "       or [--tts.kokoro-model KOKORO.gguf]\n"
               << "                  [--<dotted.key>=VALUE ...] [legacy flags ...]\n\n"
               << "  --bind HOST:PORT   listen address (default 0.0.0.0:50051)\n"
               << "  --config FILE      YAML config file (applied before env and CLI)\n\n"
@@ -303,8 +305,8 @@ main(int argc, char** argv) {
         return 1;
     }
     if (enable_tts && !tts_has_config) {
-        std::cerr << "TTS is enabled but --tts.magpie-model, --tts.codec-model, and "
-                     "--tts.tokenizer-model-dir are required\n";
+        std::cerr << "TTS is enabled but --tts.kokoro-model or the Magpie model, codec, and "
+                     "tokenizer paths are required\n";
         return 1;
     }
 #if defined(NEMO_SPEECH_BUILD_NMT)
@@ -375,10 +377,15 @@ main(int argc, char** argv) {
 
     if (enable_tts) {
         configure_cuda_graph_cache_defaults();
-        std::cerr << "[riva_server] loading MagpieTTS model: "
-                  << cfg.tts.server.runtime.magpie_model << "\n";
-        std::cerr << "[riva_server] loading NanoCodec model: " << cfg.tts.server.runtime.codec_model
-                  << "\n";
+        if (!cfg.tts.server.kokoro_model.empty()) {
+            std::cerr << "[riva_server] loading Kokoro model: " << cfg.tts.server.kokoro_model
+                      << "\n";
+        } else {
+            std::cerr << "[riva_server] loading MagpieTTS model: "
+                      << cfg.tts.server.runtime.magpie_model << "\n";
+            std::cerr << "[riva_server] loading NanoCodec model: "
+                      << cfg.tts.server.runtime.codec_model << "\n";
+        }
         try {
             nemo_speech::tts::SynthesizerConfig synthesizer_config;
             synthesizer_config.runtime = std::move(cfg.tts.server.runtime);
@@ -388,6 +395,10 @@ main(int argc, char** argv) {
             synthesizer_config.default_language_code =
                 std::move(cfg.tts.server.default_language_code);
             synthesizer_config.default_voice_name = std::move(cfg.tts.server.default_voice_name);
+            if (!cfg.tts.server.kokoro_model.empty()) {
+                synthesizer_config.family = nemo_speech::tts::TtsModelFamily::Kokoro;
+                synthesizer_config.kokoro_model = std::move(cfg.tts.server.kokoro_model);
+            }
             synthesizer =
                 std::make_shared<nemo_speech::tts::Synthesizer>(std::move(synthesizer_config));
             if (cfg.tts.server.warmup) {

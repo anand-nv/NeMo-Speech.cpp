@@ -196,6 +196,8 @@ to_config(const nemo_speech_tts_synthesizer_config* c) {
             cfg.longform_mode = to_longform(r->longform_mode);
         if (HAS_FIELD(r, nemo_speech_tts_runtime_config, lt_fp32))
             cfg.lt_fp32 = r->lt_fp32;
+        if (HAS_FIELD(r, nemo_speech_tts_runtime_config, speed))
+            cfg.speed = r->speed;
     }
     return cfg;
 }
@@ -220,6 +222,19 @@ synthesizer_config_of(const nemo_speech_tts_synthesizer_config* c) {
         if (HAS_FIELD(model, nemo_speech_tts_model_config, text_normalizer_model_dir)) {
             cfg.text_normalizer_model_dir = str_or_empty(model->text_normalizer_model_dir);
         }
+        if (HAS_FIELD(model, nemo_speech_tts_model_config, kokoro_model)) {
+            cfg.kokoro_model = str_or_empty(model->kokoro_model);
+        }
+        const bool has_kokoro = !cfg.kokoro_model.empty();
+        const bool has_magpie = !cfg.runtime.magpie_model.empty() ||
+                                !cfg.runtime.codec_model.empty() ||
+                                !cfg.tokenizer_model_dir.empty();
+        if (has_kokoro && has_magpie) {
+            throw std::invalid_argument(
+                "synthesizer config: Kokoro and Magpie model paths cannot be mixed");
+        }
+        cfg.family =
+            has_kokoro ? tts_core::TtsModelFamily::Kokoro : tts_core::TtsModelFamily::Magpie;
     }
     if (HAS_FIELD(c, nemo_speech_tts_synthesizer_config, default_language_code))
         cfg.default_language_code = str_or_empty(c->default_language_code);
@@ -249,6 +264,10 @@ to_options(const nemo_speech_tts_synthesis_options* o) {
         opts.cfg_scale = o->cfg_scale;
     if (HAS_FIELD(o, nemo_speech_tts_synthesis_options, override_cfg_scale))
         opts.override_cfg_scale = o->override_cfg_scale;
+    if (HAS_FIELD(o, nemo_speech_tts_synthesis_options, speed))
+        opts.speed = o->speed;
+    if (HAS_FIELD(o, nemo_speech_tts_synthesis_options, override_speed))
+        opts.override_speed = o->override_speed;
     return opts;
 }
 
@@ -407,6 +426,7 @@ nemo_speech_tts_runtime_config_default(void) {
     c.uma_mode = from_uma(d.uma_mode);
     c.longform_mode = from_longform(d.longform_mode);
     c.lt_fp32 = d.lt_fp32;
+    c.speed = d.speed;
     return c;
 }
 
@@ -419,6 +439,8 @@ nemo_speech_tts_synthesis_options_default(void) {
     o.seed = -1;
     o.steps = -1;
     o.top_k = -1;
+    o.speed = 1.0f;
+    o.override_speed = false;
     return o;
 }
 
@@ -438,13 +460,20 @@ nemo_speech_tts_create(
     *out = nullptr;
     return guard([&] {
         tts_core::SynthesizerConfig synthesizer_config = synthesizer_config_of(cfg);
-        if (synthesizer_config.runtime.magpie_model.empty()) {
-            set_last_error("synthesizer config: model.magpie_model is required");
-            return NEMO_SPEECH_TTS_ERROR_INVALID_ARGUMENT;
-        }
-        if (synthesizer_config.runtime.codec_model.empty()) {
-            set_last_error("synthesizer config: model.codec_model is required");
-            return NEMO_SPEECH_TTS_ERROR_INVALID_ARGUMENT;
+        if (synthesizer_config.family == tts_core::TtsModelFamily::Kokoro) {
+            if (synthesizer_config.kokoro_model.empty()) {
+                set_last_error("synthesizer config: model.kokoro_model is required");
+                return NEMO_SPEECH_TTS_ERROR_INVALID_ARGUMENT;
+            }
+        } else {
+            if (synthesizer_config.runtime.magpie_model.empty()) {
+                set_last_error("synthesizer config: model.magpie_model is required");
+                return NEMO_SPEECH_TTS_ERROR_INVALID_ARGUMENT;
+            }
+            if (synthesizer_config.runtime.codec_model.empty()) {
+                set_last_error("synthesizer config: model.codec_model is required");
+                return NEMO_SPEECH_TTS_ERROR_INVALID_ARGUMENT;
+            }
         }
         auto h = std::make_unique<nemo_speech_tts_synthesizer>();
         h->synthesizer = std::make_unique<tts_core::Synthesizer>(std::move(synthesizer_config));
@@ -525,8 +554,8 @@ nemo_speech_tts_synthesize_tokens(
         }
         const std::vector<int32_t> input(tokens, tokens + token_count);
         const tts_core::SynthesisResult result = synthesizer->synthesizer->synthesize_tokens(
-            input, to_options(options), output_rate_of(options),
-            make_callback(callback, user_data));
+            input, to_options(options), output_rate_of(options), make_callback(callback, user_data),
+            voice_of(options), language_of(options));
         if (result.cancelled) {
             set_last_error("synthesis cancelled");
             return NEMO_SPEECH_TTS_ERROR_CANCELLED;

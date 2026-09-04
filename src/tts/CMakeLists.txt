@@ -3,4 +3,7 @@
 add_subdirectory(nanocodec)
 add_subdirectory(tokenizer)
 add_subdirectory(preproc)
+if(NEMO_SPEECH_TTS_WITH_KOKORO)
+    add_subdirectory(kokoro)
+endif()
 add_subdirectory(magpietts)

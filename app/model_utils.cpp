@@ -97,7 +97,7 @@ inspect_gguf_json(const fs::path& path) {
         role = "vad";
     else if (architecture == "pnc")
         role = "pnc";
-    else if (architecture == "magpietts")
+    else if (architecture == "magpietts" || architecture == "kokoro")
         role = "tts";
     else if (architecture == "nemo-nano-codec")
         role = "codec";

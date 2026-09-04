@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 include(GNUInstallDirs)
 
-if(NEMO_SPEECH_TTS_WITH_JA)
+if(NEMO_SPEECH_TTS_WITH_JA OR NEMO_SPEECH_TTS_WITH_KOKORO)
 set(OPENJTALK_SRC_DIR ${CMAKE_SOURCE_DIR}/third_party/open_jtalk/src)
 set(OPENJTALK_DIC_SRC_DIR ${OPENJTALK_SRC_DIR}/mecab-naist-jdic)
 set(OPENJTALK_DIC_BUILD_DIR ${CMAKE_BINARY_DIR}/open_jtalk_dic)

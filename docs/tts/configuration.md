@@ -1,6 +1,6 @@
 # TTS configuration
 
-Configuration for MagpieTTS + NanoCodec. `nemo-speech serve` hosts HTTP; the
+Configuration for MagpieTTS + NanoCodec or Kokoro. `nemo-speech serve` hosts HTTP; the
 separate `riva_server` hosts Riva-compatible gRPC.
 Either process can load ASR, TTS, and NMT together. For how keys are set (YAML,
 environment, and CLI precedence), see
@@ -26,6 +26,22 @@ nemo-speech serve \
 
 For Riva-compatible gRPC, use the same engine options with `riva_server` and
 `--bind 0.0.0.0:50051`.
+
+Kokoro uses a single model path instead of the three Magpie paths:
+
+```bash
+nemo-speech serve \
+    --kokoro-model models/kokoro-v1_0.f16.gguf \
+    --host 127.0.0.1 --port 8080 \
+    --tts.language-code en-US --tts.voice-name af_heart --tts.speed 1.0
+```
+
+The equivalent engine key for either HTTP or gRPC is
+`tts.kokoro-model`. Do not combine it with Magpie model, codec, or tokenizer
+paths. Kokoro supports `en-US`, `en-GB`, `es-ES`, `fr-FR`, `hi-IN`, `it-IT`,
+`ja-JP`, `pt-BR`, and `zh-CN`; the service advertises each voice only for its
+compatible locale. Riva requests may override speed with
+`custom_configuration["speed"]`.
 
 `--tts.tokenizer-model-dir` is the extracted MagpieTTS `.nemo` directory - see
 [TTS models](models.md) for how to obtain it.
@@ -61,7 +77,8 @@ voice names in `voices_by_language`. The legacy `voice_name`, `subvoices`, and
 themselves.
 
 TTS auto-enables when `tts.magpie-model`, `tts.codec-model`, and
-`tts.tokenizer-model-dir` are all set; force with `tts.enabled`.
+`tts.tokenizer-model-dir` are all set, or when `tts.kokoro-model` is set; force
+with `tts.enabled`.
 
 ## Voices
 
@@ -144,6 +161,7 @@ All keys nest under `tts.`. Defaults shown; CLI alias listed where one exists.
 | `tts.magpie-model` | - | - | MagpieTTS GGUF token generator (required) |
 | `tts.codec-model` | - | - | NanoCodec decoder GGUF (required) |
 | `tts.tokenizer-model-dir` | - | - | extracted Magpie `.nemo` dir (required) |
+| `tts.kokoro-model` | `--kokoro-model` | - | self-contained Kokoro GGUF; mutually exclusive with Magpie paths |
 | `tts.tokenizer.sentence-limit.<lang>` | - | per language (`en` 45 ... `ja` 40) | sentence-chunking threshold in words (characters for `zh`/`ja`); subkeys `en`, `es`, `fr`, `vi`, `it`, `de`, `zh`, `hi`, `ja`, `ar`, `ko`, `pt` |
 | `tts.tn-model-dir` | - | - | enables Sparrowhawk TN with this grammar dir; requires `NEMO_SPEECH_WITH_NORM=ON` |
 | `tts.language-code` | - | `en-US` | default text language code |
@@ -155,6 +173,7 @@ All keys nest under `tts.`. Defaults shown; CLI alias listed where one exists.
 | key | CLI alias | default | meaning |
 |---|---|---|---|
 | `tts.seed` | - | `-1` | RNG seed; `-1` = current time |
+| `tts.speed` | `--speed` for offline synthesis | `1.0` | Kokoro duration speed in `[0.5, 2.0]` |
 | `tts.steps` | - | `-1` | max decoder frames; `-1` = model default |
 | `tts.top-k` | - | `-1` | top-k sampling; `-1` = model default |
 | `tts.temperature` | - | model default | sampling temperature |

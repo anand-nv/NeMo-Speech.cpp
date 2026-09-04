@@ -111,9 +111,8 @@ json_string_array(const std::vector<std::string>& values) {
 
 std::string
 voices_by_language_json(
-    const std::vector<std::string>& language_codes, const std::vector<std::string>& voices) {
+    const tts::Synthesizer& synthesizer, const std::vector<std::string>& language_codes) {
     std::string out = "{";
-    const std::string rendered_voices = json_string_array(voices);
     for (size_t i = 0; i < language_codes.size(); ++i) {
         if (i) {
             out += ",";
@@ -121,7 +120,8 @@ voices_by_language_json(
         out += "\"";
         out += json_escape(language_codes[i]);
         out += "\":{\"voices\":";
-        out += rendered_voices;
+        out += json_string_array(dotted_voice_names(
+            synthesizer.model_name(), synthesizer.speaker_names_for_language(language_codes[i])));
         out += "}";
     }
     out += "}";
@@ -190,6 +190,9 @@ map_request(const nr_tts::SynthesizeSpeechRequest& req) {
         } else if (key == "cfg_scale" || key == "cfg-scale") {
             out.options.cfg_scale = parse_float(entry.first, value);
             out.options.override_cfg_scale = true;
+        } else if (key == "speed") {
+            out.options.speed = parse_float(entry.first, value);
+            out.options.override_speed = true;
         } else {
             throw std::invalid_argument("Unsupported custom_configuration key: " + entry.first);
         }
@@ -326,13 +329,12 @@ GrpcTtsService::GetRivaSynthesisConfig(
         if (language_codes.empty()) {
             language_codes.push_back(synthesizer_->default_language_code());
         }
-        const std::vector<std::string> speaker_names = synthesizer_->speaker_names();
-        const std::vector<std::string> dotted_voices =
-            dotted_voice_names(synthesizer_->model_name(), speaker_names);
-        const std::string subvoices = join(speaker_names, ",");
         const std::string voices_by_language =
-            voices_by_language_json(language_codes, dotted_voices);
+            voices_by_language_json(*synthesizer_, language_codes);
         for (const auto& language_code : language_codes) {
+            const std::vector<std::string> speaker_names =
+                synthesizer_->speaker_names_for_language(language_code);
+            const std::string subvoices = join(speaker_names, ",");
             auto* mc = resp->add_model_config();
             mc->set_model_name(synthesizer_->model_name());
             auto& params = *mc->mutable_parameters();

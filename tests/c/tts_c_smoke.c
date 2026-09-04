@@ -9,6 +9,8 @@
  *       synthesize comma-separated Magpie text token IDs
  *   tts_c_smoke --text MAGPIE.gguf CODEC.gguf TOKENIZER_DIR TEXT [LANG]
  *       tokenize raw text and synthesize it
+ *   tts_c_smoke --kokoro-tokens KOKORO.gguf TOKENS [VOICE]
+ *   tts_c_smoke --kokoro-text KOKORO.gguf TEXT [LANG] [VOICE]
  */
 #include <ctype.h>
 #include <errno.h>
@@ -40,6 +42,8 @@ usage(const char* prog) {
     fprintf(stderr, "  %s\n", prog);
     fprintf(stderr, "  %s --tokens MAGPIE.gguf CODEC.gguf TOKENS\n", prog);
     fprintf(stderr, "  %s --text MAGPIE.gguf CODEC.gguf TOKENIZER_DIR TEXT [LANG]\n", prog);
+    fprintf(stderr, "  %s --kokoro-tokens KOKORO.gguf TOKENS [VOICE]\n", prog);
+    fprintf(stderr, "  %s --kokoro-text KOKORO.gguf TEXT [LANG] [VOICE]\n", prog);
 }
 
 static int32_t*
@@ -111,6 +115,29 @@ create_synth(const char* magpie, const char* codec, const char* tokenizer_dir) {
     return synth;
 }
 
+static nemo_speech_tts_synthesizer*
+create_kokoro(const char* kokoro) {
+    nemo_speech_tts_model_config model;
+    nemo_speech_tts_runtime_config runtime;
+    nemo_speech_tts_synthesizer_config cfg;
+    nemo_speech_tts_synthesizer* synth = NULL;
+
+    memset(&model, 0, sizeof(model));
+    model.size = sizeof(model);
+    model.kokoro_model = kokoro;
+    runtime = nemo_speech_tts_runtime_config_default();
+    memset(&cfg, 0, sizeof(cfg));
+    cfg.size = sizeof(cfg);
+    cfg.model = &model;
+    cfg.runtime = &runtime;
+    cfg.default_voice_name = "af_heart";
+    if (nemo_speech_tts_create(&cfg, &synth) != NEMO_SPEECH_TTS_OK) {
+        fprintf(stderr, "create Kokoro failed: %s\n", nemo_speech_tts_last_error());
+        return NULL;
+    }
+    return synth;
+}
+
 int
 main(int argc, char** argv) {
     printf("nemo_speech_tts_version: %s\n", nemo_speech_tts_version());
@@ -119,9 +146,77 @@ main(int argc, char** argv) {
         return 0;
     }
 
-    if (argc < 5) {
+    if (argc < 4) {
         usage(argv[0]);
         return 1;
+    }
+
+    if (strcmp(argv[1], "--kokoro-tokens") == 0) {
+        size_t token_count = 0;
+        int32_t* tokens = parse_tokens(argv[3], &token_count);
+        nemo_speech_tts_synthesizer* synth;
+        nemo_speech_tts_synthesis_options opt;
+        nemo_speech_tts_synthesis_stats stats;
+        struct pcm_sink sink = {0, 0};
+        nemo_speech_tts_status st;
+        if (!tokens || token_count == 0) {
+            fprintf(stderr, "invalid token list\n");
+            free(tokens);
+            return 1;
+        }
+        synth = create_kokoro(argv[2]);
+        if (!synth) {
+            free(tokens);
+            return 1;
+        }
+        opt = nemo_speech_tts_synthesis_options_default();
+        if (argc > 4)
+            opt.voice_name = argv[4];
+        opt.seed = 1234;
+        opt.speed = 1.0f;
+        opt.override_speed = true;
+        stats = nemo_speech_tts_synthesis_stats_default();
+        st = nemo_speech_tts_synthesize_tokens(
+            synth, &opt, tokens, token_count, count_pcm, &sink, &stats);
+        free(tokens);
+        if (st != NEMO_SPEECH_TTS_OK) {
+            fprintf(stderr, "Kokoro synthesize_tokens failed: %s\n", nemo_speech_tts_last_error());
+            nemo_speech_tts_destroy(synth);
+            return 1;
+        }
+        printf(
+            "Kokoro tokens: pcm_bytes=%zu callback_chunks=%zu sample_rate=%d samples=%llu\n",
+            sink.bytes, sink.chunks, stats.sample_rate, (unsigned long long)stats.samples_written);
+        nemo_speech_tts_destroy(synth);
+        return sink.bytes > 0 && stats.sample_rate == 24000 ? 0 : 1;
+    }
+
+    if (strcmp(argv[1], "--kokoro-text") == 0) {
+        nemo_speech_tts_synthesizer* synth = create_kokoro(argv[2]);
+        nemo_speech_tts_synthesis_options opt;
+        nemo_speech_tts_synthesis_stats stats;
+        struct pcm_sink sink = {0, 0};
+        nemo_speech_tts_status st;
+        if (!synth)
+            return 1;
+        opt = nemo_speech_tts_synthesis_options_default();
+        if (argc > 4)
+            opt.language_code = argv[4];
+        if (argc > 5)
+            opt.voice_name = argv[5];
+        opt.seed = 1234;
+        stats = nemo_speech_tts_synthesis_stats_default();
+        st = nemo_speech_tts_synthesize_text(synth, &opt, argv[3], count_pcm, &sink, &stats);
+        if (st != NEMO_SPEECH_TTS_OK) {
+            fprintf(stderr, "Kokoro synthesize_text failed: %s\n", nemo_speech_tts_last_error());
+            nemo_speech_tts_destroy(synth);
+            return 1;
+        }
+        printf(
+            "Kokoro text: pcm_bytes=%zu callback_chunks=%zu sample_rate=%d samples=%llu\n",
+            sink.bytes, sink.chunks, stats.sample_rate, (unsigned long long)stats.samples_written);
+        nemo_speech_tts_destroy(synth);
+        return sink.bytes > 0 && stats.sample_rate == 24000 ? 0 : 1;
     }
 
     if (strcmp(argv[1], "--tokens") == 0) {

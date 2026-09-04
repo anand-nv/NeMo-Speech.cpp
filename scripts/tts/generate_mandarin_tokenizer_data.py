@@ -71,19 +71,19 @@ def write_hmm_model(path: Path) -> None:
             output.write(",".join(f"{char}:{prob}" for char, prob in entries) + "\n")
 
 
-def write_pinyin_tables(output_dir: Path) -> None:
-    # NeMo loads this table before creating ChineseG2p. It overrides pypinyin's
-    # ordered single-character readings but deliberately leaves phrase data intact.
-    cc_cedict.load()
-
-    with (output_dir / "pinyin_chars.tsv").open("w", encoding="utf-8", newline="\n") as output:
+def write_pinyin_tables(output_dir: Path, prefix: str = "") -> None:
+    with (output_dir / f"{prefix}pinyin_chars.tsv").open(
+        "w", encoding="utf-8", newline="\n"
+    ) as output:
         for codepoint in sorted(PINYIN_DICT):
             char = chr(codepoint)
             converted = tone3(char)
             if converted and converted[0] != char:
                 output.write(f"{codepoint:X}\t{converted[0]}\n")
 
-    with (output_dir / "pinyin_phrases.tsv").open("w", encoding="utf-8", newline="\n") as output:
+    with (output_dir / f"{prefix}pinyin_phrases.tsv").open(
+        "w", encoding="utf-8", newline="\n"
+    ) as output:
         for phrase in sorted(PHRASES_DICT):
             converted = tone3(phrase)
             if converted:
@@ -177,6 +177,11 @@ def main() -> None:
     jieba_dict = Path(jieba.__file__).resolve().parent / "dict.txt"
     shutil.copyfile(jieba_dict, args.output_dir / "jieba.dict.utf8")
     write_hmm_model(args.output_dir / "hmm_model.utf8")
+    # Kokoro v1.0's pinned Misaki path uses unmodified pypinyin 0.55.0.
+    # Capture those readings before the Magpie-specific CC-CEDICT override.
+    write_pinyin_tables(args.output_dir, "misaki_")
+    # Magpie's ChineseG2p path deliberately loads CC-CEDICT first.
+    cc_cedict.load()
     write_pinyin_tables(args.output_dir)
 
     generated = [
@@ -184,6 +189,8 @@ def main() -> None:
         args.output_dir / "hmm_model.utf8",
         args.output_dir / "pinyin_chars.tsv",
         args.output_dir / "pinyin_phrases.tsv",
+        args.output_dir / "misaki_pinyin_chars.tsv",
+        args.output_dir / "misaki_pinyin_phrases.tsv",
     ]
     manifest = {
         "format": 1,

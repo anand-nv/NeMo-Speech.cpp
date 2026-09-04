@@ -3,8 +3,8 @@
 // nemo-speech: stable C ABI for TTS.
 //
 // This is the installed binary contract: opaque handles, POD structs, explicit
-// ownership, no exceptions, no STL, no C++ name mangling. The C++ MagpieTTS
-// runtime sits behind these handles.
+// ownership, no exceptions, no STL, no C++ name mangling. The C++ TTS
+// runtimes sit behind these handles.
 //
 // Compatibility (v1):
 //   - Stable exported symbols: nemo_speech_tts_*; C++ exports are internal and unstable.
@@ -71,6 +71,9 @@ typedef struct nemo_speech_tts_model_config {
     const char* tokenizer_model_dir;
     // Optional written-to-spoken TN grammar root. Empty keeps text unchanged.
     const char* text_normalizer_model_dir;
+    // Append-only extension. Set this alone to select Kokoro; mixing Kokoro
+    // and Magpie model paths is invalid.
+    const char* kokoro_model;
 } nemo_speech_tts_model_config;
 
 typedef struct nemo_speech_tts_runtime_config {
@@ -102,6 +105,8 @@ typedef struct nemo_speech_tts_runtime_config {
     nemo_speech_tts_uma_mode uma_mode;
     nemo_speech_tts_longform_mode longform_mode;
     bool lt_fp32;
+    // Kokoro default duration scale. Must be finite and in [0.5,2.0].
+    float speed;
 } nemo_speech_tts_runtime_config;
 
 typedef struct nemo_speech_tts_synthesizer_config {
@@ -128,6 +133,8 @@ typedef struct nemo_speech_tts_synthesis_options {
     bool override_cfg_scale;
     const char* voice_name;      // ignored when speaker >= 0
     int32_t output_sample_rate;  // 0 = model rate; otherwise 8000..model rate
+    float speed;                 // Kokoro duration scale
+    bool override_speed;
 } nemo_speech_tts_synthesis_options;
 
 // Raw PCM callback. `pcm` is little-endian signed 16-bit mono at the requested
@@ -199,14 +206,15 @@ nemo_speech_tts_speaker_count(const nemo_speech_tts_synthesizer* synthesizer);
 NEMO_SPEECH_TTS_API const char* nemo_speech_tts_speaker_name(
     const nemo_speech_tts_synthesizer* synthesizer, size_t i);
 
-// Synthesize raw text through the native Magpie tokenizer. The synthesizer must
-// have been created with model.tokenizer_model_dir.
+// Synthesize raw text through the selected model family's native tokenizer.
+// Magpie requires model.tokenizer_model_dir; Kokoro's Misaki-based tokenizer
+// data is embedded in model.kokoro_model.
 NEMO_SPEECH_TTS_API nemo_speech_tts_status nemo_speech_tts_synthesize_text(
     nemo_speech_tts_synthesizer* synthesizer, const nemo_speech_tts_synthesis_options* options,
     const char* text, nemo_speech_tts_pcm_callback callback, void* user_data,
     nemo_speech_tts_synthesis_stats* stats_out);
 
-// Synthesize pre-tokenized Magpie text tokens as a single chunk.
+// Synthesize pre-tokenized model-family token IDs as a single chunk.
 NEMO_SPEECH_TTS_API nemo_speech_tts_status nemo_speech_tts_synthesize_tokens(
     nemo_speech_tts_synthesizer* synthesizer, const nemo_speech_tts_synthesis_options* options,
     const int32_t* tokens, size_t token_count, nemo_speech_tts_pcm_callback callback,

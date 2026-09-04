@@ -101,8 +101,9 @@ validate_compiled_feature_options(int argc, char** argv) {
             add(option, "NEMO_SPEECH_BUILD_NMT=ON");
 #endif
 #if !defined(NEMO_SPEECH_CLI_TTS)
-        if (option == "--tts-model" || option == "--codec-model" || option == "--tokenizer-dir" ||
-            option == "--tn-model-dir" || option.rfind("--tts.", 0) == 0)
+        if (option == "--tts-model" || option == "--kokoro-model" || option == "--codec-model" ||
+            option == "--tokenizer-dir" || option == "--tn-model-dir" ||
+            option.rfind("--tts.", 0) == 0)
             add(option, "NEMO_SPEECH_BUILD_TTS=ON");
 #endif
     }
@@ -143,7 +144,7 @@ run_server(int argc, char** argv) {
 #endif
 #if defined(NEMO_SPEECH_CLI_TTS)
     nemo_speech::tts::MagpieTtsServerConfig tts_config;
-    std::string tts_model, codec_model, tokenizer_model, tn_model;
+    std::string tts_model, kokoro_model, codec_model, tokenizer_model, tn_model;
     int tts_enabled = -1;
 #endif
     nemo_speech::common::ParameterParser parser;
@@ -313,6 +314,8 @@ run_server(int argc, char** argv) {
 #if defined(NEMO_SPEECH_CLI_TTS)
         else if (arg == "--tts-model")
             tts_model = value(i, arg);
+        else if (arg == "--kokoro-model")
+            kokoro_model = value(i, arg);
         else if (arg == "--codec-model")
             codec_model = value(i, arg);
         else if (arg == "--tokenizer-dir")
@@ -422,15 +425,23 @@ run_server(int argc, char** argv) {
     }
 #endif
 #if defined(NEMO_SPEECH_CLI_TTS)
-    const bool tts_requested = tts_enabled > 0 || !tts_model.empty() ||
+    const bool kokoro_requested = !kokoro_model.empty() || !tts_config.kokoro_model.empty();
+    const bool tts_requested = tts_enabled > 0 || kokoro_requested || !tts_model.empty() ||
                                !tts_config.runtime.magpie_model.empty() || !codec_model.empty() ||
                                !tokenizer_model.empty() || !tn_model.empty();
+    const auto kokoro_path = tts_enabled == 0 ? std::string() : resolve("Kokoro model", [&] {
+        return optional_model(
+            kokoro_model.empty() ? tts_config.kokoro_model : kokoro_model, "tts", "Kokoro model",
+            kokoro_requested);
+    });
     const auto magpie_path = tts_enabled == 0 ? std::string() : resolve("TTS model", [&] {
+        if (kokoro_requested)
+            return std::string();
         return optional_model(
             tts_model.empty() ? tts_config.runtime.magpie_model : tts_model, "tts",
             "MagpieTTS model", tts_requested);
     });
-    if (tts_enabled != 0 && (tts_requested || !magpie_path.empty())) {
+    if (tts_enabled != 0 && !kokoro_requested && (tts_requested || !magpie_path.empty())) {
         tts_config.runtime.codec_model = resolve("TTS codec model", [&] {
             return optional_model(
                 codec_model.empty() ? tts_config.runtime.codec_model : codec_model, "codec",
@@ -490,7 +501,7 @@ run_server(int argc, char** argv) {
     }
 #endif
 #if defined(NEMO_SPEECH_CLI_TTS)
-    if (!magpie_path.empty()) {
+    if (!magpie_path.empty() || !kokoro_path.empty()) {
         bool tts_cuda = false;
 #if defined(NEMO_SPEECH_CLI_CUDA)
         tts_cuda = device_name == "auto" || device_name == "cuda" ||
@@ -517,6 +528,10 @@ run_server(int argc, char** argv) {
         config.tokenizer = tts_config.tokenizer_config;
         config.default_language_code = tts_config.default_language_code;
         config.default_voice_name = tts_config.default_voice_name;
+        if (!kokoro_path.empty()) {
+            config.family = nemo_speech::tts::TtsModelFamily::Kokoro;
+            config.kokoro_model = kokoro_path;
+        }
         engines.load_tts(std::move(config));
     }
     // The HTTP server owns request handling, so carry the existing TTS
@@ -643,6 +658,7 @@ print_serve_help(const char* program) {
 #endif
 #if defined(NEMO_SPEECH_CLI_TTS)
         "  --tts-model MODEL       Optional MagpieTTS path or indexed model\n"
+        "  --kokoro-model MODEL    Optional self-contained Kokoro GGUF\n"
         "  --codec-model MODEL     NanoCodec path or indexed model\n"
         "  --tokenizer-dir MODEL   TTS tokenizer directory or indexed model\n"
         "  --tn-model-dir MODEL    Optional TTS text-normalization assets\n"

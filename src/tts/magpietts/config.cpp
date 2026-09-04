@@ -138,6 +138,7 @@ register_runtime_config(common::ParameterParser& p, MagpieRuntimeConfig& c) {
     p.Register("threads", &c.threads, "CPU threads for Magpie and codec", {"--threads"});
     p.Register("codec-threads", &c.codec_threads, "Codec CPU threads; 0 uses threads");
     p.Register("seed", &c.seed, "Default RNG seed; -1 uses current time");
+    p.Register("speed", &c.speed, "Kokoro default speed, 0.5 through 2.0");
     p.Register("steps", &c.steps, "Maximum decoder frames; -1 uses model default");
     p.Register("top-k", &c.top_k, "Top-k sampling; -1 uses model default");
     p.Register("chunk-frames", &c.chunk_frames, "Codec frames per streamed audio chunk");
@@ -318,6 +319,9 @@ struct MagpieStreamParamsConfig {
 void
 MagpieTtsServerConfig::Register(common::ParameterParser& parser) {
     register_runtime_config(parser, runtime);
+    parser.Register(
+        "kokoro-model", &kokoro_model,
+        "Self-contained Kokoro GGUF; selects the Kokoro model family");
     parser.Register(
         "tokenizer-model-dir", &tokenizer_model_dir, "Extracted Magpie .nemo directory");
     parser.Register("tn-model-dir", &tn_model_dir, "Sparrowhawk TTS TN grammar dir");

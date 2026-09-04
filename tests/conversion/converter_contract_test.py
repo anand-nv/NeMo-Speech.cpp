@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import io
+import json
 import subprocess
 import sys
 import tarfile
@@ -18,13 +19,13 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-from conversion.registry import (
+from conversion.registry import (  # noqa: E402
     ConversionRequest,
     _convert_nmt,
     _normalized_outtype,
     detect_architecture,
 )
-from conversion.source import extract_archive
+from conversion.source import extract_archive  # noqa: E402
 
 
 class ConverterContractTest(unittest.TestCase):
@@ -67,6 +68,26 @@ class ConverterContractTest(unittest.TestCase):
             self.assertEqual(actual, "nmt")
             self.assertIsNone(resolved)
 
+            kokoro = root / "kokoro"
+            kokoro.mkdir()
+            (kokoro / "config.json").write_text(
+                json.dumps(
+                    {
+                        "plbert": {},
+                        "istftnet": {},
+                        "vocab": {},
+                        "n_token": 178,
+                        "style_dim": 128,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            actual, resolved = detect_architecture(
+                ConversionRequest(source=str(kokoro), outfile=root / "kokoro.gguf")
+            )
+            self.assertEqual(actual, "kokoro")
+            self.assertEqual(resolved, kokoro)
+
             actual, resolved = detect_architecture(
                 ConversionRequest(source="silero", outfile=root / "vad.gguf")
             )
@@ -77,8 +98,20 @@ class ConverterContractTest(unittest.TestCase):
         self.assertEqual(_normalized_outtype("asr", "auto"), "q8_0")
         self.assertEqual(_normalized_outtype("diarization", "auto"), "f32")
         self.assertEqual(_normalized_outtype("tts", "fp16"), "f16")
+        self.assertEqual(_normalized_outtype("kokoro", "auto"), "f16")
+        self.assertEqual(_normalized_outtype("kokoro", "f32"), "f32")
+        with self.assertRaises(ValueError):
+            _normalized_outtype("kokoro", "q8_0")
         with self.assertRaises(ValueError):
             _normalized_outtype("vad", "q8_0")
+
+    def test_remote_kokoro_detection(self) -> None:
+        files = ["config.json", "kokoro-v1_0.pth", "voices/af_heart.pt"]
+        request = ConversionRequest(source="hexgrad/Kokoro-82M", outfile=Path("out.gguf"))
+        with mock.patch("conversion.registry.list_hugging_face_files", return_value=files):
+            architecture, resolved = detect_architecture(request)
+        self.assertEqual(architecture, "kokoro")
+        self.assertIsNone(resolved)
 
     def test_archive_traversal_and_links_are_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

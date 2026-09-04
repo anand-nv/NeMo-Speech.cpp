@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -11,7 +12,7 @@ from pathlib import Path
 
 from .source import list_hugging_face_files, read_nemo_config, resolve_nemo_source
 
-ARCHITECTURES = ("asr", "diarization", "pnc", "vad", "tts", "codec", "nmt")
+ARCHITECTURES = ("asr", "diarization", "pnc", "vad", "tts", "kokoro", "codec", "nmt")
 
 
 @dataclass
@@ -48,6 +49,31 @@ def _architecture_from_config(config: dict) -> str:
     )
 
 
+def _is_kokoro_config(config: object) -> bool:
+    if not isinstance(config, dict):
+        return False
+    return (
+        isinstance(config.get("plbert"), dict)
+        and isinstance(config.get("istftnet"), dict)
+        and isinstance(config.get("vocab"), dict)
+        and config.get("n_token") is not None
+        and config.get("style_dim") is not None
+    )
+
+
+def _local_kokoro_source(source: Path) -> bool:
+    if not source.is_dir():
+        return False
+    config_path = source / "config.json"
+    if not config_path.is_file():
+        return False
+    try:
+        with config_path.open("r", encoding="utf-8") as stream:
+            return _is_kokoro_config(json.load(stream))
+    except (OSError, ValueError):
+        return False
+
+
 def _resolve_nemo_for_detection(request: ConversionRequest) -> Path | None:
     local = Path(request.source).expanduser()
     if local.exists():
@@ -71,7 +97,14 @@ def detect_architecture(request: ConversionRequest) -> tuple[str, Path | None]:
     if request.architecture != "auto":
         if request.architecture not in ARCHITECTURES:
             raise ValueError(f"unknown architecture: {request.architecture}")
-        if request.architecture in ("vad", "nmt"):
+        if request.architecture in ("vad", "nmt", "kokoro"):
+            local = Path(request.source).expanduser()
+            if request.architecture == "kokoro" and local.exists():
+                if not local.is_dir():
+                    raise RuntimeError(
+                        "Kokoro source must be a directory or Hugging Face repository"
+                    )
+                return request.architecture, local
             return request.architecture, None
         return (
             request.architecture,
@@ -80,6 +113,17 @@ def detect_architecture(request: ConversionRequest) -> tuple[str, Path | None]:
 
     if request.source.lower() in ("silero", "silero-vad", "vad"):
         return "vad", None
+    local = Path(request.source).expanduser()
+    if local.exists() and _local_kokoro_source(local):
+        return "kokoro", local
+    if not local.exists():
+        files = list_hugging_face_files(request.source, request.revision)
+        if (
+            "config.json" in files
+            and "kokoro-v1_0.pth" in files
+            and any(name.startswith("voices/") and name.endswith(".pt") for name in files)
+        ):
+            return "kokoro", None
     checkpoint = _resolve_nemo_for_detection(request)
     if checkpoint is None:
         return "nmt", None
@@ -93,6 +137,7 @@ def _normalized_outtype(architecture: str, outtype: str) -> str:
         "pnc": "q8_0",
         "vad": "f32",
         "tts": "f16",
+        "kokoro": "f16",
         "codec": "f16",
         "nmt": "f16",
     }
@@ -115,6 +160,7 @@ def _normalized_outtype(architecture: str, outtype: str) -> str:
         "pnc": {"f16", "bf16", "q8_0"},
         "vad": {"f32"},
         "tts": {"f16", "f32"},
+        "kokoro": {"f16", "f32"},
         "codec": {"f16", "f32"},
         "nmt": {"f32", "f16", "bf16", "q8_0", "auto"},
     }
@@ -194,6 +240,17 @@ def convert_model(request: ConversionRequest) -> str:
             outtype,
             request.metadata_json,
             request.local_transformer_outtype,
+        )
+    elif architecture == "kokoro":
+        from . import kokoro
+
+        kokoro.convert(
+            request.source,
+            request.outfile,
+            outtype,
+            request.metadata_json,
+            request.revision,
+            request.cache_dir,
         )
     elif architecture == "codec":
         from . import codec

@@ -1,0 +1,3917 @@
+{
+  "endianness": "little",
+  "fixtures": [
+    {
+      "chunks": [
+        {
+          "phoneme_ids": null,
+          "phonemes": "həlˈO!",
+          "text": "Hello!",
+          "tokens": [
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "həlˈO",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "UH",
+              "text": "Hello",
+              "whitespace": ""
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": 4,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "!",
+              "start_ts": null,
+              "tag": ".",
+              "text": "!",
+              "whitespace": ""
+            }
+          ]
+        }
+      ],
+      "id": "en-us-short",
+      "kokoro_language": "a",
+      "normalized_text": "Hello!",
+      "source_text": "Hello!",
+      "text": "Hello!",
+      "voice": "af_heart"
+    },
+    {
+      "chunks": [
+        {
+          "phoneme_ids": null,
+          "phonemes": "ˌɔn ʤˈænjəwˌɛɹi sˈɛkənd, twˈɛnti twˈɛnti sˈɪks, ɪt kˈɔst wˈʌn θˈWzᵊnd tˈu hˈʌndɹəd θˈɜɹTi fˈɔɹ dˈɑləɹz ænd fˈɪfti sˈɛnts—ɹˈiᵊli?",
+          "text": "On January 2nd, 2026, it cost $1,234.50—really?",
+          "tokens": [
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "ˌɔn",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "IN",
+              "text": "On",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "ʤˈænjəwˌɛɹi",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "NNP",
+              "text": "January",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "alias": null,
+                "currency": null,
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": null,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "sˈɛkənd",
+              "start_ts": null,
+              "tag": "NN",
+              "text": "2nd",
+              "whitespace": ""
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": 4,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": ",",
+              "start_ts": null,
+              "tag": ",",
+              "text": ",",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "twˈɛnti twˈɛnti sˈɪks",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "CD",
+              "text": "2026",
+              "whitespace": ""
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": 4,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": ",",
+              "start_ts": null,
+              "tag": ",",
+              "text": ",",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "ɪt",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "PRP",
+              "text": "it",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "kˈɔst",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "VBD",
+              "text": "cost",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": 4,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "",
+              "start_ts": null,
+              "tag": "$",
+              "text": "$",
+              "whitespace": ""
+            },
+            {
+              "_": {
+                "currency": "$",
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "wˈʌn θˈWzᵊnd tˈu hˈʌndɹəd θˈɜɹTi fˈɔɹ dˈɑləɹz ænd fˈɪfti sˈɛnts",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "CD",
+              "text": "1,234.50",
+              "whitespace": ""
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": 4,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "—",
+              "start_ts": null,
+              "tag": ":",
+              "text": "—",
+              "whitespace": ""
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "ɹˈiᵊli",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "RB",
+              "text": "really",
+              "whitespace": ""
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": 4,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "?",
+              "start_ts": null,
+              "tag": ".",
+              "text": "?",
+              "whitespace": ""
+            }
+          ]
+        }
+      ],
+      "id": "en-us-numbers-punctuation",
+      "kokoro_language": "a",
+      "normalized_text": "On January 2nd, 2026, it cost $1,234.50—really?",
+      "source_text": "On January 2nd, 2026, it cost $1,234.50—really?",
+      "text": "On January 2nd, 2026, it cost $1,234.50—really?",
+      "voice": "af_heart"
+    },
+    {
+      "chunks": [
+        {
+          "phoneme_ids": null,
+          "phonemes": "ði ˈɒnɪst tɹˈavələ jˈuːzd tə ɹˈiːd ɐn hˈɜːb kˈatəlɒɡ.",
+          "text": "The honest traveller used to read an herb catalogue.",
+          "tokens": [
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "ði",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "DT",
+              "text": "The",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "ˈɒnɪst",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "JJ",
+              "text": "honest",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "tɹˈavələ",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "NN",
+              "text": "traveller",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "jˈuːzd",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "VBN",
+              "text": "used",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "tə",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "TO",
+              "text": "to",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "ɹˈiːd",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "VB",
+              "text": "read",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "ɐn",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "DT",
+              "text": "an",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "hˈɜːb",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "NN",
+              "text": "herb",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "kˈatəlɒɡ",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "NN",
+              "text": "catalogue",
+              "whitespace": ""
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": 4,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": ".",
+              "start_ts": null,
+              "tag": ".",
+              "text": ".",
+              "whitespace": ""
+            }
+          ]
+        }
+      ],
+      "id": "en-gb-context",
+      "kokoro_language": "b",
+      "normalized_text": "The honest traveller used to read an herb catalogue.",
+      "source_text": "The honest traveller used to read an herb catalogue.",
+      "text": "The honest traveller used to read an herb catalogue.",
+      "voice": "bf_emma"
+    },
+    {
+      "chunks": [
+        {
+          "phoneme_ids": null,
+          "phonemes": "plˈiz ɹˈid mi nˈW.",
+          "text": "Please read me now.",
+          "tokens": [
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "plˈiz",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "UH",
+              "text": "Please",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "alias": null,
+                "currency": null,
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": 5,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "ɹˈid mi",
+              "start_ts": null,
+              "tag": "VB",
+              "text": "read me",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "nˈW",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "RB",
+              "text": "now",
+              "whitespace": ""
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": 4,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": ".",
+              "start_ts": null,
+              "tag": ".",
+              "text": ".",
+              "whitespace": ""
+            }
+          ]
+        }
+      ],
+      "id": "en-us-inline-phonemes",
+      "kokoro_language": "a",
+      "normalized_text": "Please [read me](/ɹˈid mi/) now.",
+      "source_text": "Please [read me](/ɹˈid mi/) now.",
+      "text": "Please [read me](/ɹˈid mi/) now.",
+      "voice": "af_heart"
+    },
+    {
+      "chunks": [
+        {
+          "phoneme_ids": null,
+          "phonemes": "həlˈO wˈɜɹld.",
+          "text": "Hello! world.",
+          "tokens": [
+            {
+              "_": {
+                "alias": null,
+                "currency": null,
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": 5,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "həlˈO",
+              "start_ts": null,
+              "tag": "UH",
+              "text": "Hello!",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": 5
+              },
+              "end_ts": null,
+              "phonemes": "wˈɜɹld",
+              "start_ts": null,
+              "tag": "NN",
+              "text": "world",
+              "whitespace": ""
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": 4,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": ".",
+              "start_ts": null,
+              "tag": ".",
+              "text": ".",
+              "whitespace": ""
+            }
+          ]
+        }
+      ],
+      "id": "en-us-inline-punctuation",
+      "kokoro_language": "a",
+      "normalized_text": "[Hello!](/həlˈO/) [world](/wˈɜɹld/).",
+      "source_text": "[Hello!](/həlˈO/) [world](/wˈɜɹld/).",
+      "text": "[Hello!](/həlˈO/) [world](/wˈɜɹld/).",
+      "voice": "af_heart"
+    },
+    {
+      "chunks": [
+        {
+          "phoneme_ids": null,
+          "phonemes": "həlO wˌɜɹld.",
+          "text": "hello world.",
+          "tokens": [
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": -2
+              },
+              "end_ts": null,
+              "phonemes": "həlO",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "UH",
+              "text": "hello",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": -1
+              },
+              "end_ts": null,
+              "phonemes": "wˌɜɹld",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "NN",
+              "text": "world",
+              "whitespace": ""
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": 4,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": ".",
+              "start_ts": null,
+              "tag": ".",
+              "text": ".",
+              "whitespace": ""
+            }
+          ]
+        }
+      ],
+      "id": "en-us-inline-stress",
+      "kokoro_language": "a",
+      "normalized_text": "[hello](-2) [world](-1).",
+      "source_text": "[hello](-2) [world](-1).",
+      "text": "[hello](-2) [world](-1).",
+      "voice": "af_heart"
+    },
+    {
+      "chunks": [
+        {
+          "phoneme_ids": null,
+          "phonemes": "ə hˈʌndɹəd twˈɛnti θɹˈi, wˈʌn hˈʌndɹədən twˈɛnti θɹˈi, wˈʌn hˈʌndɹəd ænd twˈɛnti θɹˈi.",
+          "text": "123, 123, 123.",
+          "tokens": [
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "a",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "ə hˈʌndɹəd twˈɛnti θɹˈi",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "CD",
+              "text": "123",
+              "whitespace": ""
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": 4,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": ",",
+              "start_ts": null,
+              "tag": ",",
+              "text": ",",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "n",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "wˈʌn hˈʌndɹədən twˈɛnti θɹˈi",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "CD",
+              "text": "123",
+              "whitespace": ""
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": 4,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": ",",
+              "start_ts": null,
+              "tag": ",",
+              "text": ",",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "&",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "wˈʌn hˈʌndɹəd ænd twˈɛnti θɹˈi",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "CD",
+              "text": "123",
+              "whitespace": ""
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": 4,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": ".",
+              "start_ts": null,
+              "tag": ".",
+              "text": ".",
+              "whitespace": ""
+            }
+          ]
+        }
+      ],
+      "id": "en-us-number-flags",
+      "kokoro_language": "a",
+      "normalized_text": "[123](#a#), [123](#n#), [123](#&#).",
+      "source_text": "[123](#a#), [123](#n#), [123](#&#).",
+      "text": "[123](#a#), [123](#n#), [123](#&#).",
+      "voice": "af_heart"
+    },
+    {
+      "chunks": [
+        {
+          "phoneme_ids": null,
+          "phonemes": "ði ˈæpᵊl ɪz ɪn ɐ bˈɑks, ænd ˌI jˈust tə ɹˈid ðə ɹˈɛkəɹd tə ɐn ˈɑnəst ˈɔdiəns.",
+          "text": "The apple is in a box, and I used to read the record to an honest audience.",
+          "tokens": [
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "ði",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "DT",
+              "text": "The",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "ˈæpᵊl",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "NN",
+              "text": "apple",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "ɪz",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "VBZ",
+              "text": "is",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "ɪn",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "IN",
+              "text": "in",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "ɐ",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "DT",
+              "text": "a",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "bˈɑks",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "NN",
+              "text": "box",
+              "whitespace": ""
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": 4,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": ",",
+              "start_ts": null,
+              "tag": ",",
+              "text": ",",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "ænd",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "CC",
+              "text": "and",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "ˌI",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "PRP",
+              "text": "I",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "jˈust",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "VBD",
+              "text": "used",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "tə",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "TO",
+              "text": "to",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "ɹˈid",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "VB",
+              "text": "read",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "ðə",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "DT",
+              "text": "the",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "ɹˈɛkəɹd",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "NN",
+              "text": "record",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "tə",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "IN",
+              "text": "to",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "ɐn",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "DT",
+              "text": "an",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "ˈɑnəst",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "JJ",
+              "text": "honest",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "ˈɔdiəns",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "NN",
+              "text": "audience",
+              "whitespace": ""
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": 4,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": ".",
+              "start_ts": null,
+              "tag": ".",
+              "text": ".",
+              "whitespace": ""
+            }
+          ]
+        }
+      ],
+      "id": "en-us-function-context",
+      "kokoro_language": "a",
+      "normalized_text": "The apple is in a box, and I used to read the record to an honest audience.",
+      "source_text": "The apple is in a box, and I used to read the record to an honest audience.",
+      "text": "The apple is in a box, and I used to read the record to an honest audience.",
+      "voice": "af_heart"
+    },
+    {
+      "chunks": [
+        {
+          "phoneme_ids": null,
+          "phonemes": "ðə tˈul wʌz jˈuzd jˈɛstəɹdˌA, bˌʌt ˌI jˈust tə jˈuz ənˈʌðəɹ wˈʌn.",
+          "text": "The tool was used yesterday, but I used to use another one.",
+          "tokens": [
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "ðə",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "DT",
+              "text": "The",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "tˈul",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "NN",
+              "text": "tool",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "wʌz",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "VBD",
+              "text": "was",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "jˈuzd",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "VBN",
+              "text": "used",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "jˈɛstəɹdˌA",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "NN",
+              "text": "yesterday",
+              "whitespace": ""
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": 4,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": ",",
+              "start_ts": null,
+              "tag": ",",
+              "text": ",",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "bˌʌt",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "CC",
+              "text": "but",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "ˌI",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "PRP",
+              "text": "I",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "jˈust",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "VBD",
+              "text": "used",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "tə",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "TO",
+              "text": "to",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "jˈuz",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "VB",
+              "text": "use",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "ənˈʌðəɹ",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "DT",
+              "text": "another",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "wˈʌn",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "CD",
+              "text": "one",
+              "whitespace": ""
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": 4,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": ".",
+              "start_ts": null,
+              "tag": ".",
+              "text": ".",
+              "whitespace": ""
+            }
+          ]
+        }
+      ],
+      "id": "en-us-used-context",
+      "kokoro_language": "a",
+      "normalized_text": "The tool was used yesterday, but I used to use another one.",
+      "source_text": "The tool was used yesterday, but I used to use another one.",
+      "text": "The tool was used yesterday, but I used to use another one.",
+      "voice": "af_heart"
+    },
+    {
+      "chunks": [
+        {
+          "phoneme_ids": null,
+          "phonemes": "kˈæts, dˈɔɡz, bˈɑksᵻz, wˈɪʃᵻz, bˈAbiz, wˈɔkt, nˈidᵻd, wˈɑntᵻd, ʤˈʌmpɪŋ, mˈAkɪŋ.",
+          "text": "Cats, dogs, boxes, wishes, babies, walked, needed, wanted, jumping, making.",
+          "tokens": [
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "kˈæts",
+              "rating": 3,
+              "start_ts": null,
+              "tag": "NNS",
+              "text": "Cats",
+              "whitespace": ""
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": 4,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": ",",
+              "start_ts": null,
+              "tag": ",",
+              "text": ",",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "dˈɔɡz",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "NNS",
+              "text": "dogs",
+              "whitespace": ""
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": 4,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": ",",
+              "start_ts": null,
+              "tag": ",",
+              "text": ",",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "bˈɑksᵻz",
+              "rating": 3,
+              "start_ts": null,
+              "tag": "NNS",
+              "text": "boxes",
+              "whitespace": ""
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": 4,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": ",",
+              "start_ts": null,
+              "tag": ",",
+              "text": ",",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "wˈɪʃᵻz",
+              "rating": 3,
+              "start_ts": null,
+              "tag": "NNS",
+              "text": "wishes",
+              "whitespace": ""
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": 4,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": ",",
+              "start_ts": null,
+              "tag": ",",
+              "text": ",",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "bˈAbiz",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "NNS",
+              "text": "babies",
+              "whitespace": ""
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": 4,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": ",",
+              "start_ts": null,
+              "tag": ",",
+              "text": ",",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "wˈɔkt",
+              "rating": 3,
+              "start_ts": null,
+              "tag": "VBD",
+              "text": "walked",
+              "whitespace": ""
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": 4,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": ",",
+              "start_ts": null,
+              "tag": ",",
+              "text": ",",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "nˈidᵻd",
+              "rating": 3,
+              "start_ts": null,
+              "tag": "VBN",
+              "text": "needed",
+              "whitespace": ""
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": 4,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": ",",
+              "start_ts": null,
+              "tag": ",",
+              "text": ",",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "wˈɑntᵻd",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "VBD",
+              "text": "wanted",
+              "whitespace": ""
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": 4,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": ",",
+              "start_ts": null,
+              "tag": ",",
+              "text": ",",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "ʤˈʌmpɪŋ",
+              "rating": 3,
+              "start_ts": null,
+              "tag": "VBG",
+              "text": "jumping",
+              "whitespace": ""
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": 4,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": ",",
+              "start_ts": null,
+              "tag": ",",
+              "text": ",",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "mˈAkɪŋ",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "VBG",
+              "text": "making",
+              "whitespace": ""
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": 4,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": ".",
+              "start_ts": null,
+              "tag": ".",
+              "text": ".",
+              "whitespace": ""
+            }
+          ]
+        }
+      ],
+      "id": "en-us-morphology",
+      "kokoro_language": "a",
+      "normalized_text": "Cats, dogs, boxes, wishes, babies, walked, needed, wanted, jumping, making.",
+      "source_text": "Cats, dogs, boxes, wishes, babies, walked, needed, wanted, jumping, making.",
+      "text": "Cats, dogs, boxes, wishes, babies, walked, needed, wanted, jumping, making.",
+      "voice": "af_heart"
+    },
+    {
+      "chunks": [
+        {
+          "phoneme_ids": null,
+          "phonemes": "wˈʌn dˈɑləɹ, tˈu pˈWndz ænd fˈɪfti pˈɛns, nˈIndi nˈIn sˈɛnts, fˈɜɹst, sˈɛkənd, θˈɜɹd, fˈɔɹθ, nˌIntˈin nˈIndi nˈIn, tˈu θˈWzᵊnd, θɹˈi pYnt wˈʌn fˈɔɹ, ænd mˈInəs fˈɔɹTi tˈu.",
+          "text": "$1, £2.50, €0.99, 1st, 2nd, 3rd, 4th, 1999, 2000, 3.14, and -42.",
+          "tokens": [
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": 4,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "",
+              "start_ts": null,
+              "tag": "$",
+              "text": "$",
+              "whitespace": ""
+            },
+            {
+              "_": {
+                "currency": "$",
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "wˈʌn dˈɑləɹ",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "CD",
+              "text": "1",
+              "whitespace": ""
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": 4,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": ",",
+              "start_ts": null,
+              "tag": ",",
+              "text": ",",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": 4,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "",
+              "start_ts": null,
+              "tag": "$",
+              "text": "£",
+              "whitespace": ""
+            },
+            {
+              "_": {
+                "currency": "£",
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "tˈu pˈWndz ænd fˈɪfti pˈɛns",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "CD",
+              "text": "2.50",
+              "whitespace": ""
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": 4,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": ",",
+              "start_ts": null,
+              "tag": ",",
+              "text": ",",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": 4,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "",
+              "start_ts": null,
+              "tag": "$",
+              "text": "€",
+              "whitespace": ""
+            },
+            {
+              "_": {
+                "currency": "€",
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "nˈIndi nˈIn sˈɛnts",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "CD",
+              "text": "0.99",
+              "whitespace": ""
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": 4,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": ",",
+              "start_ts": null,
+              "tag": ",",
+              "text": ",",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "alias": null,
+                "currency": null,
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": null,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "fˈɜɹst",
+              "start_ts": null,
+              "tag": "JJ",
+              "text": "1st",
+              "whitespace": ""
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": 4,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": ",",
+              "start_ts": null,
+              "tag": ",",
+              "text": ",",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "alias": null,
+                "currency": null,
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": null,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "sˈɛkənd",
+              "start_ts": null,
+              "tag": "NN",
+              "text": "2nd",
+              "whitespace": ""
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": 4,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": ",",
+              "start_ts": null,
+              "tag": ",",
+              "text": ",",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "alias": null,
+                "currency": null,
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": null,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "θˈɜɹd",
+              "start_ts": null,
+              "tag": "JJ",
+              "text": "3rd",
+              "whitespace": ""
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": 4,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": ",",
+              "start_ts": null,
+              "tag": ",",
+              "text": ",",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "alias": null,
+                "currency": null,
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": null,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "fˈɔɹθ",
+              "start_ts": null,
+              "tag": "JJ",
+              "text": "4th",
+              "whitespace": ""
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": 4,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": ",",
+              "start_ts": null,
+              "tag": ",",
+              "text": ",",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "nˌIntˈin nˈIndi nˈIn",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "CD",
+              "text": "1999",
+              "whitespace": ""
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": 4,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": ",",
+              "start_ts": null,
+              "tag": ",",
+              "text": ",",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "tˈu θˈWzᵊnd",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "CD",
+              "text": "2000",
+              "whitespace": ""
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": 4,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": ",",
+              "start_ts": null,
+              "tag": ",",
+              "text": ",",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "θɹˈi pYnt wˈʌn fˈɔɹ",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "CD",
+              "text": "3.14",
+              "whitespace": ""
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": 4,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": ",",
+              "start_ts": null,
+              "tag": ",",
+              "text": ",",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "ænd",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "CC",
+              "text": "and",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "mˈInəs fˈɔɹTi tˈu",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "UH",
+              "text": "-42",
+              "whitespace": ""
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": 4,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": ".",
+              "start_ts": null,
+              "tag": ".",
+              "text": ".",
+              "whitespace": ""
+            }
+          ]
+        }
+      ],
+      "id": "en-us-numeric-forms",
+      "kokoro_language": "a",
+      "normalized_text": "$1, £2.50, €0.99, 1st, 2nd, 3rd, 4th, 1999, 2000, 3.14, and -42.",
+      "source_text": "$1, £2.50, €0.99, 1st, 2nd, 3rd, 4th, 1999, 2000, 3.14, and -42.",
+      "text": "$1, £2.50, €0.99, 1st, 2nd, 3rd, 4th, 1999, 2000, 3.14, and -42.",
+      "voice": "af_heart"
+    },
+    {
+      "chunks": [
+        {
+          "phoneme_ids": null,
+          "phonemes": "dˈɑktəɹ smˈɪθs kˈOˌɑp kˈænt ɹiˈɛntəɹ—ɹˈiᵊli... “jˈɛs!” kæfˈA ˌiəkjˈut.",
+          "text": "Dr. Smith's co-op can't re-enter—really... “Yes!” café é.",
+          "tokens": [
+            {
+              "_": {
+                "alias": null,
+                "currency": null,
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": null,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "dˈɑktəɹ",
+              "start_ts": null,
+              "tag": "NNP",
+              "text": "Dr.",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "alias": null,
+                "currency": null,
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": null,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "smˈɪθs",
+              "start_ts": null,
+              "tag": "NNP",
+              "text": "Smith's",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "alias": null,
+                "currency": null,
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": null,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "kˈOˌɑp",
+              "start_ts": null,
+              "tag": "NN",
+              "text": "co-op",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "alias": null,
+                "currency": null,
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": null,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "kˈænt",
+              "start_ts": null,
+              "tag": "RB",
+              "text": "can't",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "alias": null,
+                "currency": null,
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": null,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "ɹiˈɛntəɹ",
+              "start_ts": null,
+              "tag": "VB",
+              "text": "re-enter",
+              "whitespace": ""
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": 4,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "—",
+              "start_ts": null,
+              "tag": ":",
+              "text": "—",
+              "whitespace": ""
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "ɹˈiᵊli",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "RB",
+              "text": "really",
+              "whitespace": ""
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": 4,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": ".",
+              "start_ts": null,
+              "tag": ":",
+              "text": ".",
+              "whitespace": ""
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": 4,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": ".",
+              "start_ts": null,
+              "tag": ":",
+              "text": ".",
+              "whitespace": ""
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": 4,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": ".",
+              "start_ts": null,
+              "tag": ":",
+              "text": ".",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": 4,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "“",
+              "start_ts": null,
+              "tag": "``",
+              "text": "“",
+              "whitespace": ""
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "jˈɛs",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "UH",
+              "text": "Yes",
+              "whitespace": ""
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": 4,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "!",
+              "start_ts": null,
+              "tag": ".",
+              "text": "!",
+              "whitespace": ""
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": 4,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "”",
+              "start_ts": null,
+              "tag": "''",
+              "text": "”",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "kæfˈA",
+              "rating": 2,
+              "start_ts": null,
+              "tag": "NNP",
+              "text": "café",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "ˌiəkjˈut",
+              "rating": 2,
+              "start_ts": null,
+              "tag": "NNP",
+              "text": "é",
+              "whitespace": ""
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": 4,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": ".",
+              "start_ts": null,
+              "tag": ".",
+              "text": ".",
+              "whitespace": ""
+            }
+          ]
+        }
+      ],
+      "id": "en-us-unicode-possessives",
+      "kokoro_language": "a",
+      "normalized_text": "Dr. Smith's co-op can't re-enter—really... “Yes!” café é.",
+      "source_text": "Dr. Smith's co-op can't re-enter—really… “Yes!” café é.",
+      "text": "Dr. Smith's co-op can't re-enter—really… “Yes!” café é.",
+      "voice": "af_heart"
+    },
+    {
+      "chunks": [
+        {
+          "phoneme_ids": null,
+          "phonemes": "¡ˈola! sˈon las ðˈoθe:tɾˈAnta i kwˈesta βˌAntiθˈinko ˈeʊɾos.",
+          "text": "¡Hola! Son las 12:30 y cuesta 25 euros.",
+          "tokens": []
+        }
+      ],
+      "id": "es-es",
+      "kokoro_language": "e",
+      "normalized_text": "¡Hola! Son las 12:30 y cuesta 25 euros.",
+      "source_text": "¡Hola! Son las 12:30 y cuesta 25 euros.",
+      "text": "¡Hola! Son las 12:30 y cuesta 25 euros.",
+      "voice": "ef_dora"
+    },
+    {
+      "chunks": [
+        {
+          "phoneme_ids": null,
+          "phonemes": "bɔ̃ʒˈuʁ ! ʒe vˈɛ̃tdˈøz idˈe.",
+          "text": "Bonjour ! J'ai vingt-deux idées.",
+          "tokens": []
+        }
+      ],
+      "id": "fr-fr",
+      "kokoro_language": "f",
+      "normalized_text": "Bonjour ! J'ai vingt-deux idées.",
+      "source_text": "Bonjour ! J'ai vingt-deux idées.",
+      "text": "Bonjour ! J'ai vingt-deux idées.",
+      "voice": "ff_siwis"
+    },
+    {
+      "chunks": [
+        {
+          "phoneme_ids": null,
+          "phonemes": "nəmˈʌsteː! mˌeːɾeː pˈaːs bˈaːɾəh kɪtˈaːbẽː hɛ̃",
+          "text": "नमस्ते! मेरे पास १२ किताबें हैं।",
+          "tokens": []
+        }
+      ],
+      "id": "hi-in",
+      "kokoro_language": "h",
+      "normalized_text": "नमस्ते! मेरे पास १२ किताबें हैं।",
+      "source_text": "नमस्ते! मेरे पास १२ किताबें हैं।",
+      "text": "नमस्ते! मेरे पास १२ किताबें हैं।",
+      "voice": "hf_alpha"
+    },
+    {
+      "chunks": [
+        {
+          "phoneme_ids": null,
+          "phonemes": "ʧˈao! o ventitrˈe domˈande.",
+          "text": "Ciao! Ho ventitré domande.",
+          "tokens": []
+        }
+      ],
+      "id": "it-it",
+      "kokoro_language": "i",
+      "normalized_text": "Ciao! Ho ventitré domande.",
+      "source_text": "Ciao! Ho ventitré domande.",
+      "text": "Ciao! Ho ventitré domande.",
+      "voice": "if_sara"
+    },
+    {
+      "chunks": [
+        {
+          "phoneme_ids": null,
+          "phonemes": "ɲiʔpoŋɡo desɨ. sambʲakɯ ɲiʥɨːiʨi eɴ deɕi ta.",
+          "text": "日本語です。三百二十一円でした。",
+          "tokens": []
+        }
+      ],
+      "id": "ja-jp",
+      "kokoro_language": "j",
+      "normalized_text": "日本語です。三百二十一円でした。",
+      "source_text": "日本語です。三百二十一円でした。",
+      "text": "日本語です。三百二十一円でした。",
+      "voice": "jf_alpha"
+    },
+    {
+      "chunks": [
+        {
+          "phoneme_ids": null,
+          "phonemes": "ɡaʔkoː e iʔta. sɨːpaː to koːçiː, tokʲidokʲi, çitobʲito. iʨi kaɾa saɴ ko.",
+          "text": "学校へ行った。スーパーとコーヒー、時々、人々。1〜3個。",
+          "tokens": []
+        }
+      ],
+      "id": "ja-jp-kana-rules",
+      "kokoro_language": "j",
+      "normalized_text": "学校へ行った。スーパーとコーヒー、時々、人々。1〜3個。",
+      "source_text": "学校へ行った。スーパーとコーヒー、時々、人々。１〜３個。",
+      "text": "学校へ行った。スーパーとコーヒー、時々、人々。１〜３個。",
+      "voice": "jf_alpha"
+    },
+    {
+      "chunks": [
+        {
+          "phoneme_ids": null,
+          "phonemes": "olˈa! tˌeɲʊ vˈiŋʧj i trˈes pˌeɾəɡˈũŋtæs.",
+          "text": "Olá! Tenho vinte e três perguntas.",
+          "tokens": []
+        }
+      ],
+      "id": "pt-br",
+      "kokoro_language": "p",
+      "normalized_text": "Olá! Tenho vinte e três perguntas.",
+      "source_text": "Olá! Tenho vinte e três perguntas.",
+      "text": "Olá! Tenho vinte e três perguntas.",
+      "voice": "pf_dora"
+    },
+    {
+      "chunks": [
+        {
+          "phoneme_ids": null,
+          "phonemes": "ni↓xau↓!ʨi→ntʰjɛ→n ʂɨ↘ ɚ↘〇ɚ↘ ljou↘njɛ↗n ʨjou↓ɥe↘ ɚ↘ɻɨ↘.",
+          "text": "你好!今天是二〇二六年九月二日。",
+          "tokens": []
+        }
+      ],
+      "id": "zh-cn",
+      "kokoro_language": "z",
+      "normalized_text": "你好!今天是二〇二六年九月二日。",
+      "source_text": "你好！今天是二〇二六年九月二日。",
+      "text": "你好！今天是二〇二六年九月二日。",
+      "voice": "zf_xiaobei"
+    },
+    {
+      "chunks": [
+        {
+          "phoneme_ids": null,
+          "phonemes": "ꭧʰʊ↗ŋʨʰi↘ŋ i↗nxa↗ŋ tɤ i→nɥe↘ xə↓n xau↓tʰi→ŋ. xai↗ kʰɤ↓i↓,n↗.",
+          "text": "重庆银行的音乐很好听。还可以,嗯。",
+          "tokens": []
+        }
+      ],
+      "id": "zh-cn-polyphones",
+      "kokoro_language": "z",
+      "normalized_text": "重庆银行的音乐很好听。还可以,嗯。",
+      "source_text": "重庆银行的音乐很好听。还可以，嗯。",
+      "text": "重庆银行的音乐很好听。还可以，嗯。",
+      "voice": "zf_xiaobei"
+    },
+    {
+      "chunks": [
+        {
+          "phoneme_ids": null,
+          "phonemes": "ʨi→nɤ↗ ʂɨ↘ i→wa↘n li↗ŋi→,pjɛ→nxau↘ i↘pai↓ li↗ŋi→,ɚ↘li↗ŋɚ↘ sɨ↘njɛ↗n.",
+          "text": "金额是10001,编号101,2024年。",
+          "tokens": []
+        }
+      ],
+      "id": "zh-cn-numbers",
+      "kokoro_language": "z",
+      "normalized_text": "金额是10001,编号101,2024年。",
+      "source_text": "金额是10001，编号101，2024年。",
+      "text": "金额是10001，编号101，2024年。",
+      "voice": "zf_xiaobei"
+    },
+    {
+      "chunks": [
+        {
+          "phoneme_ids": null,
+          "phonemes": "a",
+          "text": "direct phoneme boundary 1",
+          "tokens": []
+        }
+      ],
+      "id": "boundary-1",
+      "kokoro_language": "a",
+      "normalized_text": "direct phoneme boundary 1",
+      "phonemes": "a",
+      "source_text": "direct phoneme boundary 1",
+      "text": "direct phoneme boundary 1",
+      "voice": "af_heart"
+    },
+    {
+      "chunks": [
+        {
+          "phoneme_ids": null,
+          "phonemes": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "text": "direct phoneme boundary 400",
+          "tokens": []
+        }
+      ],
+      "id": "boundary-400",
+      "kokoro_language": "a",
+      "normalized_text": "direct phoneme boundary 400",
+      "phonemes": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "source_text": "direct phoneme boundary 400",
+      "text": "direct phoneme boundary 400",
+      "voice": "af_heart"
+    },
+    {
+      "chunks": [
+        {
+          "phoneme_ids": null,
+          "phonemes": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "text": "direct phoneme boundary 509",
+          "tokens": []
+        }
+      ],
+      "id": "boundary-509",
+      "kokoro_language": "a",
+      "normalized_text": "direct phoneme boundary 509",
+      "phonemes": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "source_text": "direct phoneme boundary 509",
+      "text": "direct phoneme boundary 509",
+      "voice": "af_heart"
+    },
+    {
+      "chunks": [
+        {
+          "phoneme_ids": null,
+          "phonemes": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "text": "direct phoneme boundary 510",
+          "tokens": []
+        }
+      ],
+      "id": "boundary-510",
+      "kokoro_language": "a",
+      "normalized_text": "direct phoneme boundary 510",
+      "phonemes": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "source_text": "direct phoneme boundary 510",
+      "text": "direct phoneme boundary 510",
+      "voice": "af_heart"
+    },
+    {
+      "chunks": [
+        {
+          "phoneme_ids": null,
+          "phonemes": "kəkˈɔɹO ɹˈidz ðə fˈɜɹst sˈɛntᵊns wɪð pˌʌŋkʧəwˈAʃən ænd ɐ jˈusfᵊl pˈɔz. ðə sˈɛkənd sˈɛntᵊns kəntˈAnz ɪnˈʌf wˈɜɹdz tʊ ˈɛksəɹsˌIz ðə nˈATɪv wˈɔTəɹfˌɔl splˈɪTəɹ, wˌIl pɹɪzˈɜɹvɪŋ ˈɛvəɹi sˈɔɹs kˈɛɹəktəɹ ænd ˈɛvəɹi əbzˈɜɹvəbᵊl tˈOkᵊn. ɐ θˈɜɹd sˈɛntᵊns dəskˈʌsᵻz nˈʌmbəɹz sˈʌʧ æz sˌɛvəntˈin, twˈɛnti twˈɛnti sˈɪks, ænd fˈɔɹTi tˈu dˈɑləɹz ænd fˈɪfti sˈɛnts. ðə fˈɔɹθ sˈɛntᵊns dəlˈɪbəɹətli kəntˈɪnjuz wɪð ˈɔɹdᵊnˌɛɹi vOkˈæbjəlˌɛɹi sˌO ðæt ðə ɹəzˈʌltɪŋ fˈOnˌim sˈikwəns kɹˈɔsᵻz ðə mˈɑdᵊl bˈWndəɹi.",
+          "text": "Kokoro reads the first sentence with punctuation and a useful pause. The second sentence contains enough words to exercise the native waterfall splitter, while preserving every source character and every observable token. A third sentence discusses numbers such as 17, 2026, and $42.50. The fourth sentence deliberately continues with ordinary vocabulary so that the resulting phoneme sequence crosses the model boundary.",
+          "tokens": [
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "kəkˈɔɹO",
+              "rating": 2,
+              "start_ts": null,
+              "tag": "NNP",
+              "text": "Kokoro",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "ɹˈidz",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "VBZ",
+              "text": "reads",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "ðə",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "DT",
+              "text": "the",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "fˈɜɹst",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "JJ",
+              "text": "first",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "sˈɛntᵊns",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "NN",
+              "text": "sentence",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "wɪð",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "IN",
+              "text": "with",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "pˌʌŋkʧəwˈAʃən",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "NN",
+              "text": "punctuation",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "ænd",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "CC",
+              "text": "and",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "ɐ",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "DT",
+              "text": "a",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "jˈusfᵊl",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "JJ",
+              "text": "useful",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "pˈɔz",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "NN",
+              "text": "pause",
+              "whitespace": ""
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": 4,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": ".",
+              "start_ts": null,
+              "tag": ".",
+              "text": ".",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "ðə",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "DT",
+              "text": "The",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "sˈɛkənd",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "JJ",
+              "text": "second",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "sˈɛntᵊns",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "NN",
+              "text": "sentence",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "kəntˈAnz",
+              "rating": 3,
+              "start_ts": null,
+              "tag": "VBZ",
+              "text": "contains",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "ɪnˈʌf",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "JJ",
+              "text": "enough",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "wˈɜɹdz",
+              "rating": 3,
+              "start_ts": null,
+              "tag": "NNS",
+              "text": "words",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "tʊ",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "TO",
+              "text": "to",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "ˈɛksəɹsˌIz",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "VB",
+              "text": "exercise",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "ðə",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "DT",
+              "text": "the",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "nˈATɪv",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "JJ",
+              "text": "native",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "wˈɔTəɹfˌɔl",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "NN",
+              "text": "waterfall",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "splˈɪTəɹ",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "NN",
+              "text": "splitter",
+              "whitespace": ""
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": 4,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": ",",
+              "start_ts": null,
+              "tag": ",",
+              "text": ",",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "wˌIl",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "IN",
+              "text": "while",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "pɹɪzˈɜɹvɪŋ",
+              "rating": 3,
+              "start_ts": null,
+              "tag": "VBG",
+              "text": "preserving",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "ˈɛvəɹi",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "DT",
+              "text": "every",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "sˈɔɹs",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "NN",
+              "text": "source",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "kˈɛɹəktəɹ",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "NN",
+              "text": "character",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "ænd",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "CC",
+              "text": "and",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "ˈɛvəɹi",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "DT",
+              "text": "every",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "əbzˈɜɹvəbᵊl",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "JJ",
+              "text": "observable",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "tˈOkᵊn",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "NN",
+              "text": "token",
+              "whitespace": ""
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": 4,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": ".",
+              "start_ts": null,
+              "tag": ".",
+              "text": ".",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "ɐ",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "DT",
+              "text": "A",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "θˈɜɹd",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "JJ",
+              "text": "third",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "sˈɛntᵊns",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "NN",
+              "text": "sentence",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "dəskˈʌsᵻz",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "VBZ",
+              "text": "discusses",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "nˈʌmbəɹz",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "NNS",
+              "text": "numbers",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "sˈʌʧ",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "JJ",
+              "text": "such",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "æz",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "IN",
+              "text": "as",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "sˌɛvəntˈin",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "CD",
+              "text": "17",
+              "whitespace": ""
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": 4,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": ",",
+              "start_ts": null,
+              "tag": ",",
+              "text": ",",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "twˈɛnti twˈɛnti sˈɪks",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "CD",
+              "text": "2026",
+              "whitespace": ""
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": 4,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": ",",
+              "start_ts": null,
+              "tag": ",",
+              "text": ",",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "ænd",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "CC",
+              "text": "and",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": 4,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "",
+              "start_ts": null,
+              "tag": "$",
+              "text": "$",
+              "whitespace": ""
+            },
+            {
+              "_": {
+                "currency": "$",
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "fˈɔɹTi tˈu dˈɑləɹz ænd fˈɪfti sˈɛnts",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "CD",
+              "text": "42.50",
+              "whitespace": ""
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": 4,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": ".",
+              "start_ts": null,
+              "tag": ".",
+              "text": ".",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "ðə",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "DT",
+              "text": "The",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "fˈɔɹθ",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "JJ",
+              "text": "fourth",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "sˈɛntᵊns",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "NN",
+              "text": "sentence",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "dəlˈɪbəɹətli",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "RB",
+              "text": "deliberately",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "kəntˈɪnjuz",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "VBZ",
+              "text": "continues",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "wɪð",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "IN",
+              "text": "with",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "ˈɔɹdᵊnˌɛɹi",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "JJ",
+              "text": "ordinary",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "vOkˈæbjəlˌɛɹi",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "NN",
+              "text": "vocabulary",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "sˌO",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "IN",
+              "text": "so",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "ðæt",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "IN",
+              "text": "that",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "ðə",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "DT",
+              "text": "the",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "ɹəzˈʌltɪŋ",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "VBG",
+              "text": "resulting",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "fˈOnˌim",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "JJ",
+              "text": "phoneme",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "sˈikwəns",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "NN",
+              "text": "sequence",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "kɹˈɔsᵻz",
+              "rating": 3,
+              "start_ts": null,
+              "tag": "VBZ",
+              "text": "crosses",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "ðə",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "DT",
+              "text": "the",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "mˈɑdᵊl",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "NN",
+              "text": "model",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "bˈWndəɹi",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "NN",
+              "text": "boundary",
+              "whitespace": ""
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": 4,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": ".",
+              "start_ts": null,
+              "tag": ".",
+              "text": ".",
+              "whitespace": " "
+            }
+          ]
+        },
+        {
+          "phoneme_ids": null,
+          "phonemes": "fˈInᵊli, ðə fˈɪfθ sˈɛntᵊns pɹˈuvz ðæt lˈATəɹ ʧˈʌŋks ɹəmˈAn ˈɔɹdəɹd ænd ɑɹ nˌɑt sˈɪnθəsˌIzd bəfˈɔɹ ðə fˈɜɹst kˈɔlbˌæk ɪz dəlˈɪvəɹd.",
+          "text": "Finally, the fifth sentence proves that later chunks remain ordered and are not synthesized before the first callback is delivered.",
+          "tokens": [
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "fˈInᵊli",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "RB",
+              "text": "Finally",
+              "whitespace": ""
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": 4,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": ",",
+              "start_ts": null,
+              "tag": ",",
+              "text": ",",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "ðə",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "DT",
+              "text": "the",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "fˈɪfθ",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "JJ",
+              "text": "fifth",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "sˈɛntᵊns",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "NN",
+              "text": "sentence",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "pɹˈuvz",
+              "rating": 3,
+              "start_ts": null,
+              "tag": "VBZ",
+              "text": "proves",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "ðæt",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "IN",
+              "text": "that",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "lˈATəɹ",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "RB",
+              "text": "later",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "ʧˈʌŋks",
+              "rating": 3,
+              "start_ts": null,
+              "tag": "NNS",
+              "text": "chunks",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "ɹəmˈAn",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "VBP",
+              "text": "remain",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "ˈɔɹdəɹd",
+              "rating": 3,
+              "start_ts": null,
+              "tag": "JJ",
+              "text": "ordered",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "ænd",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "CC",
+              "text": "and",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "ɑɹ",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "VBP",
+              "text": "are",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "nˌɑt",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "RB",
+              "text": "not",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "sˈɪnθəsˌIzd",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "VBN",
+              "text": "synthesized",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "bəfˈɔɹ",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "IN",
+              "text": "before",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "ðə",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "DT",
+              "text": "the",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "fˈɜɹst",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "JJ",
+              "text": "first",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "kˈɔlbˌæk",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "NN",
+              "text": "callback",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "ɪz",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "VBZ",
+              "text": "is",
+              "whitespace": " "
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": "dəlˈɪvəɹd",
+              "rating": 4,
+              "start_ts": null,
+              "tag": "VBN",
+              "text": "delivered",
+              "whitespace": ""
+            },
+            {
+              "_": {
+                "is_head": true,
+                "num_flags": "",
+                "prespace": false,
+                "rating": 4,
+                "stress": null
+              },
+              "end_ts": null,
+              "phonemes": ".",
+              "start_ts": null,
+              "tag": ".",
+              "text": ".",
+              "whitespace": ""
+            }
+          ]
+        }
+      ],
+      "id": "en-us-long-paragraph",
+      "kokoro_language": "a",
+      "normalized_text": "Kokoro reads the first sentence with punctuation and a useful pause. The second sentence contains enough words to exercise the native waterfall splitter, while preserving every source character and every observable token. A third sentence discusses numbers such as 17, 2026, and $42.50. The fourth sentence deliberately continues with ordinary vocabulary so that the resulting phoneme sequence crosses the model boundary. Finally, the fifth sentence proves that later chunks remain ordered and are not synthesized before the first callback is delivered.",
+      "source_text": "Kokoro reads the first sentence with punctuation and a useful pause. The second sentence contains enough words to exercise the native waterfall splitter, while preserving every source character and every observable token. A third sentence discusses numbers such as 17, 2026, and $42.50. The fourth sentence deliberately continues with ordinary vocabulary so that the resulting phoneme sequence crosses the model boundary. Finally, the fifth sentence proves that later chunks remain ordered and are not synthesized before the first callback is delivered.",
+      "text": "Kokoro reads the first sentence with punctuation and a useful pause. The second sentence contains enough words to exercise the native waterfall splitter, while preserving every source character and every observable token. A third sentence discusses numbers such as 17, 2026, and $42.50. The fourth sentence deliberately continues with ordinary vocabulary so that the resulting phoneme sequence crosses the model boundary. Finally, the fifth sentence proves that later chunks remain ordered and are not synthesized before the first callback is delivered.",
+      "voice": "af_heart"
+    }
+  ],
+  "format": 2,
+  "kokoro_commit": "dfb907a02bba8152ca444717ca5d78747ccb4bec",
+  "kokoro_pipeline_sha256": "499982bbc23a1019681cdb4c327c1d911e7034e240721b95686ff1a8f15c2a9a",
+  "misaki_commit": "fba1236595f2d2bf21d414ba6e57d25256afada3",
+  "misaki_version": "0.9.4",
+  "model": null,
+  "source_generator": "splitmix64-box-muller-v1",
+  "voice_sha256": {}
+}

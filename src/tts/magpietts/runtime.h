@@ -59,6 +59,8 @@ struct MagpieRuntimeConfig {
     MagpieBackendPreference sampling_backend = MagpieBackendPreference::Auto;
     MagpieUmaMode uma_mode = MagpieUmaMode::Auto;
     MagpieLongformMode longform_mode = MagpieLongformMode::Auto;
+    // Common TTS option. Magpie currently ignores it; Kokoro consumes it.
+    float speed = 1.0f;
 };
 
 struct MagpieSynthesisOptions {
@@ -70,6 +72,9 @@ struct MagpieSynthesisOptions {
     float cfg_scale = 0.0f;
     bool override_temperature = false;
     bool override_cfg_scale = false;
+    // Common TTS option. Magpie currently ignores it; Kokoro consumes it.
+    float speed = 1.0f;
+    bool override_speed = false;
 };
 
 struct MagpieSynthesisStats {

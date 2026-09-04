@@ -32,6 +32,7 @@ commit.
 | PnC | `q8_0` | local NeMo checkpoint |
 | VAD | `f32` | `silero` |
 | TTS | `f16` | `nvidia/magpie_tts_multilingual_357m` |
+| Kokoro | `f16` | `hexgrad/Kokoro-82M` |
 | codec | `f16` | `nvidia/nemo-nano-codec-22khz-1.89kbps-21.5fps` |
 | NMT | `f16` | `nvidia/Riva-Translate-4B-Instruct-v2` |
 
@@ -46,6 +47,9 @@ python3 convert_model.py nvidia/nemotron-speech-streaming-en-0.6b \
 python3 convert_model.py nvidia/diar_streaming_sortformer_4spk-v2 \
     --outfile models/diarization.gguf --outtype q8_0
 python3 convert_model.py silero --outfile models/vad.gguf
+python3 convert_model.py hexgrad/Kokoro-82M --architecture kokoro \
+    --revision f3ff3571791e39611d31c381e3a41a3af07b4987 \
+    --outfile models/kokoro-v1_0.f16.gguf
 ```
 
 NMT conversion additionally uses the pinned llama.cpp converter. Initialize and

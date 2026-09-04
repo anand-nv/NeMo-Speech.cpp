@@ -41,6 +41,10 @@ target_link_libraries(nemo_speech_tts PUBLIC
     nemo_speech_tts_preproc
     nemo_speech_tts_tokenizer_obj
 )
+if(TARGET nemo_speech_tts_kokoro)
+    target_link_libraries(nemo_speech_tts PRIVATE nemo_speech_tts_kokoro)
+    target_compile_definitions(nemo_speech_tts PRIVATE NEMO_SPEECH_TTS_WITH_KOKORO=1)
+endif()
 
 # Stable C ABI (nemo_speech_tts_*) and the in-tree C++ API share one implementation
 # library. Aliases preserve existing target names without producing extra DSOs.

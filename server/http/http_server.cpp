@@ -563,9 +563,16 @@ struct Server::Impl {
                 for (const auto& voice : model->speaker_names()) voices.emplace_back(voice);
                 item["voices"] = std::move(voices);
                 Value::Array languages;
-                for (const auto& language : model->supported_language_codes())
+                Value voices_by_language(Value::Object{});
+                for (const auto& language : model->supported_language_codes()) {
                     languages.emplace_back(language);
+                    Value::Array language_voices;
+                    for (const auto& voice : model->speaker_names_for_language(language))
+                        language_voices.emplace_back(voice);
+                    voices_by_language[language] = std::move(language_voices);
+                }
                 item["languages"] = std::move(languages);
+                item["voices_by_language"] = std::move(voices_by_language);
                 data.emplace_back(std::move(item));
             }
             catch (const std::exception&) {
@@ -690,10 +697,17 @@ struct Server::Impl {
                 }
                 if (synthesis.text.empty())
                     throw std::invalid_argument("input is required");
-                const double speed = body.number_or("speed", 1.0);
-                if (std::abs(speed - 1.0) > 1e-9)
-                    throw std::invalid_argument(
-                        "this model does not support changing speech speed");
+                if (const auto* speed_value = body.find("speed")) {
+                    if (!speed_value->is_number())
+                        throw std::invalid_argument("speed must be a number");
+                    const double speed = speed_value->number();
+                    if (synthesizer->model_name() != "kokoro" && std::abs(speed - 1.0) > 1e-9) {
+                        throw std::invalid_argument(
+                            "this model does not support changing speech speed");
+                    }
+                    synthesis.options.speed = static_cast<float>(speed);
+                    synthesis.options.override_speed = true;
+                }
                 const std::string format = body.string_or("response_format", "wav");
                 if (format != "wav" && format != "pcm")
                     throw std::invalid_argument("response_format must be wav or pcm");

@@ -5,6 +5,7 @@
 #include <iostream>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -83,6 +84,51 @@ param_or_empty(const google::protobuf::Map<std::string, std::string>& params, co
 
 int
 main() {
+    bool ok = true;
+    bool ran_kokoro = false;
+    const char* kokoro_model_env = std::getenv("NEMO_SPEECH_TEST_KOKORO_MODEL");
+    if (kokoro_model_env && *kokoro_model_env && fs::is_regular_file(kokoro_model_env)) {
+        ran_kokoro = true;
+        tts::SynthesizerConfig config;
+        config.family = tts::TtsModelFamily::Kokoro;
+        config.kokoro_model = kokoro_model_env;
+        config.runtime.lt_backend = tts::MagpieBackendPreference::Cpu;
+        auto synthesizer = std::make_shared<tts::Synthesizer>(std::move(config));
+        nemo_speech::GrpcTtsService service(std::move(synthesizer));
+        nr_tts::RivaSynthesisConfigRequest request;
+        nr_tts::RivaSynthesisConfigResponse response;
+        grpc::ServerContext context;
+        const grpc::Status status = service.GetRivaSynthesisConfig(&context, &request, &response);
+        ok &= expect(status.ok(), "Kokoro GetRivaSynthesisConfig succeeds");
+        ok &= expect(response.model_config_size() == 9, "Kokoro advertises nine locales");
+        const std::unordered_map<std::string, char> prefixes = {
+            {"en-US", 'a'}, {"en-GB", 'b'}, {"es-ES", 'e'}, {"fr-FR", 'f'}, {"hi-IN", 'h'},
+            {"it-IT", 'i'}, {"ja-JP", 'j'}, {"pt-BR", 'p'}, {"zh-CN", 'z'},
+        };
+        for (const auto& model : response.model_config()) {
+            const auto& params = model.parameters();
+            const std::string language = param_or_empty(params, "language_code");
+            const auto prefix = prefixes.find(language);
+            ok &= expect(model.model_name() == "kokoro", "Kokoro model name is advertised");
+            ok &= expect(prefix != prefixes.end(), "Kokoro locale is canonical");
+            const std::vector<std::string> voices = split_csv(param_or_empty(params, "subvoices"));
+            ok &= expect(!voices.empty(), "Kokoro locale has voices");
+            if (prefix != prefixes.end()) {
+                for (const auto& voice : voices) {
+                    ok &= expect(
+                        !voice.empty() && voice.front() == prefix->second,
+                        "Kokoro locale contains only compatible voices");
+                }
+            }
+            const std::string mapping = param_or_empty(params, "voices_by_language");
+            for (const auto& voice : voices) {
+                ok &= expect(
+                    mapping.find("\"kokoro." + voice + "\"") != std::string::npos,
+                    "Kokoro mapping contains its dotted voice");
+            }
+        }
+    }
+
     const std::string magpie_model = env_or_default(
         "NEMO_SPEECH_TEST_TTS_MAGPIE_MODEL",
         source_path("models/magpie_tts_multilingual_357m/magpie_tts_multilingual_357m.f16.gguf"));
@@ -95,8 +141,9 @@ main() {
         source_path("models/magpie_tts_multilingual_357m/extracted"));
 
     if (!fs::exists(magpie_model) || !fs::exists(codec_model) || !fs::is_directory(tokenizer_dir)) {
-        std::cerr << "SKIP: MagpieTTS config test needs local GGUF/tokenizer fixtures\n";
-        return 0;
+        if (!ran_kokoro)
+            std::cerr << "SKIP: TTS config test needs local GGUF/tokenizer fixtures\n";
+        return ok ? 0 : 1;
     }
 
     tts::MagpieRuntimeConfig runtime_config;
@@ -122,7 +169,6 @@ main() {
     grpc::ServerContext ctx;
     const grpc::Status status = service.GetRivaSynthesisConfig(&ctx, &req, &resp);
 
-    bool ok = true;
     ok &= expect(status.ok(), "GetRivaSynthesisConfig succeeds");
     ok &= expect(
         resp.model_config_size() == static_cast<int>(configured_languages.size()),

@@ -11,6 +11,11 @@ submodule directories. Project-level attribution is consolidated in the root
 `THIRD_PARTY_NOTICES.md`. Source versions and generated-file checksums are
 recorded in `manifest.json`.
 
+The `misaki_pinyin_*.tsv` siblings capture unmodified pypinyin before the
+Magpie-specific CC-CEDICT override. Kokoro v1.0 loads these files to reproduce
+Misaki 0.9.4's legacy `ZHG2P(version=None)` path. Both table families and their
+hashes are produced in one deterministic generator invocation.
+
 Regenerate the runtime tables with the pinned Python packages installed:
 
 ```bash

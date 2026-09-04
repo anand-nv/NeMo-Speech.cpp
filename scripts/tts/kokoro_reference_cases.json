@@ -1,0 +1,168 @@
+[
+  {
+    "id": "en-us-short",
+    "text": "Hello!",
+    "kokoro_language": "a",
+    "voice": "af_heart"
+  },
+  {
+    "id": "en-us-numbers-punctuation",
+    "text": "On January 2nd, 2026, it cost $1,234.50—really?",
+    "kokoro_language": "a",
+    "voice": "af_heart"
+  },
+  {
+    "id": "en-gb-context",
+    "text": "The honest traveller used to read an herb catalogue.",
+    "kokoro_language": "b",
+    "voice": "bf_emma"
+  },
+  {
+    "id": "en-us-inline-phonemes",
+    "text": "Please [read me](/ɹˈid mi/) now.",
+    "kokoro_language": "a",
+    "voice": "af_heart"
+  },
+  {
+    "id": "en-us-inline-punctuation",
+    "text": "[Hello!](/həlˈO/) [world](/wˈɜɹld/).",
+    "kokoro_language": "a",
+    "voice": "af_heart"
+  },
+  {
+    "id": "en-us-inline-stress",
+    "text": "[hello](-2) [world](-1).",
+    "kokoro_language": "a",
+    "voice": "af_heart"
+  },
+  {
+    "id": "en-us-number-flags",
+    "text": "[123](#a#), [123](#n#), [123](#&#).",
+    "kokoro_language": "a",
+    "voice": "af_heart"
+  },
+  {
+    "id": "en-us-function-context",
+    "text": "The apple is in a box, and I used to read the record to an honest audience.",
+    "kokoro_language": "a",
+    "voice": "af_heart"
+  },
+  {
+    "id": "en-us-used-context",
+    "text": "The tool was used yesterday, but I used to use another one.",
+    "kokoro_language": "a",
+    "voice": "af_heart"
+  },
+  {
+    "id": "en-us-morphology",
+    "text": "Cats, dogs, boxes, wishes, babies, walked, needed, wanted, jumping, making.",
+    "kokoro_language": "a",
+    "voice": "af_heart"
+  },
+  {
+    "id": "en-us-numeric-forms",
+    "text": "$1, £2.50, €0.99, 1st, 2nd, 3rd, 4th, 1999, 2000, 3.14, and -42.",
+    "kokoro_language": "a",
+    "voice": "af_heart"
+  },
+  {
+    "id": "en-us-unicode-possessives",
+    "text": "Dr. Smith's co-op can't re-enter—really… “Yes!” café é.",
+    "kokoro_language": "a",
+    "voice": "af_heart"
+  },
+  {
+    "id": "es-es",
+    "text": "¡Hola! Son las 12:30 y cuesta 25 euros.",
+    "kokoro_language": "e",
+    "voice": "ef_dora"
+  },
+  {
+    "id": "fr-fr",
+    "text": "Bonjour ! J'ai vingt-deux idées.",
+    "kokoro_language": "f",
+    "voice": "ff_siwis"
+  },
+  {
+    "id": "hi-in",
+    "text": "नमस्ते! मेरे पास १२ किताबें हैं।",
+    "kokoro_language": "h",
+    "voice": "hf_alpha"
+  },
+  {
+    "id": "it-it",
+    "text": "Ciao! Ho ventitré domande.",
+    "kokoro_language": "i",
+    "voice": "if_sara"
+  },
+  {
+    "id": "ja-jp",
+    "text": "日本語です。三百二十一円でした。",
+    "kokoro_language": "j",
+    "voice": "jf_alpha"
+  },
+  {
+    "id": "ja-jp-kana-rules",
+    "text": "学校へ行った。スーパーとコーヒー、時々、人々。１〜３個。",
+    "kokoro_language": "j",
+    "voice": "jf_alpha"
+  },
+  {
+    "id": "pt-br",
+    "text": "Olá! Tenho vinte e três perguntas.",
+    "kokoro_language": "p",
+    "voice": "pf_dora"
+  },
+  {
+    "id": "zh-cn",
+    "text": "你好！今天是二〇二六年九月二日。",
+    "kokoro_language": "z",
+    "voice": "zf_xiaobei"
+  },
+  {
+    "id": "zh-cn-polyphones",
+    "text": "重庆银行的音乐很好听。还可以，嗯。",
+    "kokoro_language": "z",
+    "voice": "zf_xiaobei"
+  },
+  {
+    "id": "zh-cn-numbers",
+    "text": "金额是10001，编号101，2024年。",
+    "kokoro_language": "z",
+    "voice": "zf_xiaobei"
+  },
+  {
+    "id": "boundary-1",
+    "text": "direct phoneme boundary 1",
+    "phonemes": "a",
+    "kokoro_language": "a",
+    "voice": "af_heart"
+  },
+  {
+    "id": "boundary-400",
+    "text": "direct phoneme boundary 400",
+    "phonemes": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "kokoro_language": "a",
+    "voice": "af_heart"
+  },
+  {
+    "id": "boundary-509",
+    "text": "direct phoneme boundary 509",
+    "phonemes": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "kokoro_language": "a",
+    "voice": "af_heart"
+  },
+  {
+    "id": "boundary-510",
+    "text": "direct phoneme boundary 510",
+    "phonemes": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "kokoro_language": "a",
+    "voice": "af_heart"
+  },
+  {
+    "id": "en-us-long-paragraph",
+    "text": "Kokoro reads the first sentence with punctuation and a useful pause. The second sentence contains enough words to exercise the native waterfall splitter, while preserving every source character and every observable token. A third sentence discusses numbers such as 17, 2026, and $42.50. The fourth sentence deliberately continues with ordinary vocabulary so that the resulting phoneme sequence crosses the model boundary. Finally, the fifth sentence proves that later chunks remain ordered and are not synthesized before the first callback is delivered.",
+    "kokoro_language": "a",
+    "voice": "af_heart"
+  }
+]

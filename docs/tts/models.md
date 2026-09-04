@@ -1,8 +1,8 @@
 # TTS models
 
-The TTS pipeline loads two GGUFs: a **MagpieTTS** token generator and a **NeMo
-NanoCodec** decoder. The CLI downloads the complete default stack, including
-Magpie's tokenizer assets, with one command:
+NeMo-Speech supports the existing **MagpieTTS + NeMo NanoCodec** stack and the
+single-file **Kokoro-82M v1.0** runtime. The CLI downloads the complete default
+Magpie stack, including its tokenizer assets, with one command:
 
 ```bash
 nemo-speech pull magpie
@@ -11,6 +11,38 @@ nemo-speech synthesize "Hello from Magpie Multilingual." --output output.wav
 
 `synthesize` performs the same verified pull automatically when its model
 options are omitted.
+
+## Kokoro-82M
+
+Hugging Face: [hexgrad/Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M)
+
+Kokoro is not in `models/index.json`; convert the immutable upstream revision
+locally. The F16 GGUF contains the model, vocabulary, pinned Misaki lexicons,
+and all 54 v1.0 voices. F32 is also supported for parity work.
+
+```bash
+python3 convert_model.py hexgrad/Kokoro-82M --architecture kokoro \
+  --revision f3ff3571791e39611d31c381e3a41a3af07b4987 \
+  --outfile models/kokoro-v1_0.f16.gguf --outtype f16
+
+nemo-speech synthesize "Hello from Kokoro." \
+  --kokoro-model models/kokoro-v1_0.f16.gguf \
+  --voice af_heart --language en-US --speed 1.0 --output kokoro.wav
+```
+
+Build with `NEMO_SPEECH_TTS_WITH_KOKORO=ON`. The installed runtime is native
+C++ and does not need Python. It links ICU and eSpeak-NG, bundles its Mandarin
+resources, and uses `unidic-lite==1.0.8` for Japanese. Extract that package and
+pass its `unidic_lite/dicdir` as `NEMO_SPEECH_KOKORO_UNIDIC_DIR` when
+configuring so the dictionary is installed with the runtime. See the
+[native Kokoro README](../../src/tts/kokoro/README.md) for exact build commands.
+
+Canonical language codes are `en-US`, `en-GB`, `es-ES`, `fr-FR`, `hi-IN`,
+`it-IT`, `ja-JP`, `pt-BR`, and `zh-CN`. Language aliases are accepted, and an
+omitted language is inferred from the selected voice. Kokoro uses native
+24 kHz audio and supports speed values from 0.5 through 2.0. PCM callbacks are
+progressive within a linguistic chunk: the bounded inverse-STFT stage emits
+500 ms tiles without changing the concatenated waveform.
 
 ## MagpieTTS token generator
 

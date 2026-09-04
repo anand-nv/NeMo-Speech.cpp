@@ -196,7 +196,14 @@ to a file.
 
 ```bash
 nemo-speech synthesize "Hello" --output hello.wav
+nemo-speech synthesize "Hello from Kokoro." \
+  --kokoro-model models/kokoro-v1_0.f16.gguf \
+  --voice af_heart --language en-US --speed 1.0 --output kokoro.wav
 ```
+
+Kokoro uses one self-contained GGUF and does not need the Magpie codec or
+tokenizer paths. It emits native 24 kHz audio, supports `--speed` from 0.5 to
+2.0, and infers the language from `--voice` when `--language` is omitted.
 
 ## Select a backend
 

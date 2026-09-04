@@ -101,8 +101,8 @@ Text-to-speech (OpenAI-compatible JSON subset).
 | `input` | string | required | text to synthesize |
 | `voice` | string | model default | local voice name, model-qualified voice name, or zero-based speaker index |
 | `language` | string | model default | language code |
-| `speed` | number | `1.0` | only `1.0` is accepted; other values return 400 |
-| `sample_rate` | int | model default | output sample rate, from 8000 Hz through the model rate (22050 Hz for the supported NanoCodec model) |
+| `speed` | number | configured model default | Kokoro accepts 0.5 through 2.0; Magpie accepts only 1.0 |
+| `sample_rate` | int | model default | output sample rate, from 8000 Hz through the loaded model rate (22050 Hz for NanoCodec, 24000 Hz for Kokoro) |
 | `response_format` | string | `wav` | `wav` or `pcm` |
 
 Response: mono signed PCM16, either in a WAV container or raw little-endian

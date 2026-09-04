@@ -15,6 +15,7 @@ namespace nemo_speech::tts {
 
 struct MagpieTtsServerConfig {
     MagpieRuntimeConfig runtime;
+    std::string kokoro_model;
     std::string tokenizer_model_dir;
     std::string tn_model_dir;
     MagpieTokenizerConfig tokenizer_config;

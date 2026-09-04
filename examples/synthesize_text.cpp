@@ -22,6 +22,7 @@ namespace {
 struct Params {
     std::string magpie_model;
     std::string codec_model;
+    std::string kokoro_model;
     std::string tokenizer_model_dir;
     std::string text_normalizer_model_dir;
     std::string text;
@@ -29,7 +30,7 @@ struct Params {
     std::string token_text;
     std::string tokens_file;
     std::string output;
-    std::string language = "en-US";
+    std::string language;
     std::string voice;
     nemo_speech_tts_runtime_config runtime = nemo_speech_tts_runtime_config_default();
     nemo_speech_tts_synthesis_options options = nemo_speech_tts_synthesis_options_default();
@@ -42,6 +43,7 @@ usage(const char* argv0) {
         stderr,
         "usage: %s --tts.magpie-model MODEL --tts.codec-model MODEL \\\n"
         "          --tts.tokenizer-model-dir DIR --tts.text TEXT --tts.wav-out FILE [options]\n"
+        "   or: %s --tts.kokoro-model MODEL --tts.text TEXT --tts.wav-out FILE [options]\n"
         "\n"
         "Input (choose text or tokens):\n"
         "  --tts.text TEXT                 Text to synthesize\n"
@@ -53,12 +55,13 @@ usage(const char* argv0) {
         "  --tts.magpie-model FILE         MagpieTTS GGUF\n"
         "  --tts.codec-model FILE          NanoCodec decoder GGUF\n"
         "  --tts.tokenizer-model-dir DIR   Extracted Magpie tokenizer assets\n"
+        "  --tts.kokoro-model FILE         Self-contained Kokoro GGUF\n"
         "  --tts.tn-model-dir DIR          Optional text-normalization grammars\n"
         "  --tts.wav-out FILE              Output mono PCM WAV\n"
         "  --tts.output-sample-rate HZ     Resample output (default: model rate)\n"
         "\n"
         "Synthesis:\n"
-        "  --tts.language-code CODE        Language code (default: en-US)\n"
+        "  --tts.language-code CODE        Language (Kokoro infers it from voice)\n"
         "  --tts.voice-name NAME           Voice name or speaker index\n"
         "  --tts.speaker N                 Speaker index\n"
         "  --tts.seed N                    Sampling seed\n"
@@ -66,11 +69,12 @@ usage(const char* argv0) {
         "  --tts.top-k N                   Top-k sampling\n"
         "  --tts.temperature F             Sampling temperature\n"
         "  --tts.cfg-scale F               Classifier-free guidance scale\n"
+        "  --tts.speed F                   Kokoro speed, 0.5 through 2.0\n"
         "  --threads N                     CPU threads\n"
         "  --tts.codec-threads N           Codec CPU threads\n"
         "  --tts.codec-cpu                 Run NanoCodec on CPU\n"
         "  --verbose                       Enable detailed runtime logging\n",
-        argv0);
+        argv0, argv0);
 }
 
 int
@@ -122,6 +126,10 @@ parse_args(int argc, char** argv, Params& params) {
             if (!(next = value(arg.c_str())))
                 return false;
             params.codec_model = next;
+        } else if (arg == "--tts.kokoro-model") {
+            if (!(next = value(arg.c_str())))
+                return false;
+            params.kokoro_model = next;
         } else if (arg == "--tts.tokenizer-model-dir") {
             if (!(next = value(arg.c_str())))
                 return false;
@@ -184,6 +192,11 @@ parse_args(int argc, char** argv, Params& params) {
                 return false;
             params.options.cfg_scale = parse_float(next, arg.c_str());
             params.options.override_cfg_scale = true;
+        } else if (arg == "--tts.speed") {
+            if (!(next = value(arg.c_str())))
+                return false;
+            params.options.speed = parse_float(next, arg.c_str());
+            params.options.override_speed = true;
         } else if (arg == "--tts.output-sample-rate") {
             if (!(next = value(arg.c_str())))
                 return false;
@@ -332,8 +345,14 @@ main(int argc, char** argv) {
 
     const bool has_text = !params.text.empty();
     const bool has_tokens = !params.token_text.empty();
-    if (params.magpie_model.empty() || params.codec_model.empty() || params.output.empty() ||
-        has_text == has_tokens || (has_text && params.tokenizer_model_dir.empty())) {
+    const bool has_kokoro = !params.kokoro_model.empty();
+    const bool has_any_magpie = !params.magpie_model.empty() || !params.codec_model.empty() ||
+                                !params.tokenizer_model_dir.empty();
+    const bool valid_models = has_kokoro
+                                  ? !has_any_magpie
+                                  : (!params.magpie_model.empty() && !params.codec_model.empty() &&
+                                     (!has_text || !params.tokenizer_model_dir.empty()));
+    if (!valid_models || params.output.empty() || has_text == has_tokens) {
         usage(argv[0]);
         return 2;
     }
@@ -344,6 +363,7 @@ main(int argc, char** argv) {
     model.codec_model = params.codec_model.c_str();
     model.tokenizer_model_dir =
         params.tokenizer_model_dir.empty() ? nullptr : params.tokenizer_model_dir.c_str();
+    model.kokoro_model = params.kokoro_model.empty() ? nullptr : params.kokoro_model.c_str();
     model.text_normalizer_model_dir = params.text_normalizer_model_dir.empty()
                                           ? nullptr
                                           : params.text_normalizer_model_dir.c_str();
@@ -352,8 +372,10 @@ main(int argc, char** argv) {
     config.size = sizeof(config);
     config.model = &model;
     config.runtime = &params.runtime;
-    config.default_language_code = params.language.c_str();
-    config.default_voice_name = params.voice.empty() ? nullptr : params.voice.c_str();
+    config.default_language_code = params.language.empty() ? nullptr : params.language.c_str();
+    // Voice is a per-request option here. Leaving the configured default unset
+    // lets Kokoro infer the request language from a non-English selected voice.
+    config.default_voice_name = nullptr;
 
     nemo_speech_tts_synthesizer* synthesizer = nullptr;
     nemo_speech_tts_status status = nemo_speech_tts_create(&config, &synthesizer);
@@ -362,7 +384,7 @@ main(int argc, char** argv) {
         return 1;
     }
 
-    params.options.language_code = params.language.c_str();
+    params.options.language_code = params.language.empty() ? nullptr : params.language.c_str();
     params.options.voice_name = params.voice.empty() ? nullptr : params.voice.c_str();
     std::vector<uint8_t> pcm;
     nemo_speech_tts_synthesis_stats stats = nemo_speech_tts_synthesis_stats_default();

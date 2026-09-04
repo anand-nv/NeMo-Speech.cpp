@@ -1,0 +1,10 @@
+[
+  {
+    "id": "english-short",
+    "text": "Hello world!",
+    "kokoro_language": "a",
+    "voice": "af_heart",
+    "speed": 1.0,
+    "seed": 1234
+  }
+]

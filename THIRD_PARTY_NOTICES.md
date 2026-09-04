@@ -196,6 +196,54 @@ The generated Mandarin tokenizer tables contain data derived from:
 
 The CppJieba and limonp sources used to consume these tables are listed above.
 
+### Misaki native port
+
+- Source: [`hexgrad/misaki`](https://github.com/hexgrad/misaki), version 0.9.4
+  at commit `fba1236595f2d2bf21d414ba6e57d25256afada3`
+- Native counterparts: `src/tts/kokoro/tokenizer/`
+- Copyright hexgrad and contributors
+- License: Apache License 2.0
+
+The native Kokoro frontend behaviorally ports selected Misaki algorithms and
+records their file-level mapping in
+`src/tts/kokoro/tokenizer/MISAKI_PORT.md`. Python Misaki is used only by
+developer differential-test generation and is not a runtime dependency.
+
+Misaki's `transcription.py`, ported in `mandarin_g2p.cpp`, was adapted from
+[`stefantaubert/pinyin-to-ipa`](https://github.com/stefantaubert/pinyin-to-ipa),
+Copyright Stefan Taubert and contributors, licensed under MIT. The MIT terms
+below apply.
+
+Misaki's `cutlet.py`, ported in `japanese_g2p.cpp`, adapts
+[`polm/cutlet`](https://github.com/polm/cutlet), Copyright Paul O'Leary
+McCann and contributors, licensed under MIT. Its number-to-kana logic derives
+from [`Greatdane/Convert-Numbers-to-Japanese`](https://github.com/Greatdane/Convert-Numbers-to-Japanese),
+also licensed under MIT. Japanese morphological readings use MeCab with
+UniDic-lite 1.0.8; distributors must retain the dictionary's bundled license
+notices.
+
+### eSpeak-NG
+
+- Source: [`espeak-ng/espeak-ng`](https://github.com/espeak-ng/espeak-ng),
+  compatibility target 1.51 at tag commit
+  `2e9a5fccbb0095e87b2769e9249ea1f821918ecd`
+- Copyright the eSpeak-NG authors and contributors
+- License: GNU General Public License version 3 or later
+
+When `NEMO_SPEECH_TTS_WITH_KOKORO` is enabled, the native Misaki port links
+the eSpeak-NG C API for English fallback and the Spanish, French, Hindi,
+Italian, and Brazilian Portuguese frontends. Binary distributors must ship
+the matching library, voice data, and GPL terms. The default build leaves this
+feature disabled.
+
+### ICU
+
+- Source: [Unicode ICU](https://icu.unicode.org/)
+- Copyright Unicode, Inc. and others
+- License: Unicode License v3
+
+The optional native Kokoro tokenizer uses ICU for Unicode NFKC normalization.
+
 ## MIT License
 
 The following text applies to the MIT-licensed components and derived material

@@ -7,3 +7,5 @@ __pycache__/
 core.*
 client_logs/
 .venv/
+venv/
+models/
