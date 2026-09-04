@@ -18,13 +18,13 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-from conversion.registry import (
+from conversion.registry import (  # noqa: E402
     ConversionRequest,
     _convert_nmt,
     _normalized_outtype,
     detect_architecture,
 )
-from conversion.source import extract_archive
+from conversion.source import extract_archive  # noqa: E402
 
 
 class ConverterContractTest(unittest.TestCase):
@@ -73,12 +73,79 @@ class ConverterContractTest(unittest.TestCase):
             self.assertEqual(actual, "vad")
             self.assertIsNone(resolved)
 
+            omnivoice = root / "omnivoice"
+            omnivoice.mkdir()
+            (omnivoice / "config.json").write_text(
+                '{"model_type":"omnivoice","architectures":["OmniVoice"]}\n',
+                encoding="utf-8",
+            )
+            actual, resolved = detect_architecture(
+                ConversionRequest(source=str(omnivoice), outfile=root / "omnivoice.gguf")
+            )
+            self.assertEqual(actual, "omnivoice")
+            self.assertEqual(resolved, omnivoice)
+
+            codec = root / "audio_tokenizer"
+            codec.mkdir()
+            (codec / "config.json").write_text(
+                '{"model_type":"higgs_audio_v2_tokenizer",'
+                '"architectures":["HiggsAudioV2TokenizerModel"]}\n',
+                encoding="utf-8",
+            )
+            actual, resolved = detect_architecture(
+                ConversionRequest(source=str(codec), outfile=root / "codec.gguf")
+            )
+            self.assertEqual(actual, "higgs_audio_v2_tokenizer")
+            self.assertEqual(resolved, codec)
+
+    def test_remote_omnivoice_detection_downloads_only_config(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = root / "config.json"
+            config.write_text('{"model_type":"omnivoice"}\n', encoding="utf-8")
+            request = ConversionRequest(
+                source="k2-fsa/OmniVoice",
+                outfile=root / "model.gguf",
+                revision="revision",
+                cache_dir=root / "cache",
+            )
+            with mock.patch(
+                "conversion.registry.list_hugging_face_files",
+                return_value=["config.json", "model.safetensors"],
+            ), mock.patch(
+                "conversion.registry.download_hugging_face_config", return_value=config
+            ) as download:
+                actual, resolved = detect_architecture(request)
+            self.assertEqual(actual, "omnivoice")
+            self.assertIsNone(resolved)
+            download.assert_called_once_with("k2-fsa/OmniVoice", root / "cache", "revision")
+
+    def test_explicit_hf_architectures_do_not_use_nemo_resolution(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for architecture in ("omnivoice", "higgs_audio_v2_tokenizer"):
+                with mock.patch("conversion.registry.resolve_nemo_source") as resolve_nemo:
+                    actual, resolved = detect_architecture(
+                        ConversionRequest(
+                            source="org/model",
+                            outfile=root / f"{architecture}.gguf",
+                            architecture=architecture,
+                        )
+                    )
+                self.assertEqual(actual, architecture)
+                self.assertIsNone(resolved)
+                resolve_nemo.assert_not_called()
+
     def test_output_type_defaults_and_validation(self) -> None:
         self.assertEqual(_normalized_outtype("asr", "auto"), "q8_0")
         self.assertEqual(_normalized_outtype("diarization", "auto"), "f32")
         self.assertEqual(_normalized_outtype("tts", "fp16"), "f16")
+        self.assertEqual(_normalized_outtype("omnivoice", "auto"), "f16")
+        self.assertEqual(_normalized_outtype("higgs_audio_v2_tokenizer", "f32"), "f32")
         with self.assertRaises(ValueError):
             _normalized_outtype("vad", "q8_0")
+        with self.assertRaises(ValueError):
+            _normalized_outtype("omnivoice", "q8_0")
 
     def test_archive_traversal_and_links_are_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

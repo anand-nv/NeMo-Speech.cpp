@@ -3,14 +3,24 @@
 #include "grpc_tts.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
+#include <cmath>
+#include <cstdint>
+#include <cstring>
 #include <iostream>
+#include <memory>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
 
+#include "audio_resampler.h"
 #include "riva/proto/riva_audio.pb.h"
+#include "tts/omnivoice/prompt.h"
+#ifdef NEMO_SPEECH_TTS_WITH_OMNIVOICE
+#include "tts/omnivoice/runtime.h"
+#endif
 
 namespace nemo_speech {
 namespace {
@@ -158,21 +168,68 @@ parse_float(const std::string& key, const std::string& value) {
     return parsed;
 }
 
-tts::SynthesisRequest
-map_request(const nr_tts::SynthesizeSpeechRequest& req) {
+bool
+parse_bool(const std::string& key, std::string value) {
+    value = lower_ascii(std::move(value));
+    if (value == "1" || value == "true" || value == "yes" || value == "on")
+        return true;
+    if (value == "0" || value == "false" || value == "no" || value == "off")
+        return false;
+    throw std::invalid_argument("custom_configuration '" + key + "' must be a boolean");
+}
+
+struct MappedRequest {
+    tts::SynthesisRequest request;
+    std::unique_ptr<tts::omnivoice::VoicePrompt> prompt;
+};
+
+MappedRequest
+map_request(const nr_tts::SynthesizeSpeechRequest& req, tts::Synthesizer& synthesizer) {
     const auto encoding = req.encoding();
     if (encoding != nr_audio::LINEAR_PCM && encoding != nr_audio::ENCODING_UNSPECIFIED)
         throw std::invalid_argument("Only LINEAR_PCM encoding is supported.");
-    if (req.has_zero_shot_data())
-        throw std::invalid_argument("zero_shot_data is not supported by MagpieTTS.");
     if (!req.custom_dictionary().empty())
         throw std::invalid_argument("custom_dictionary is not supported by MagpieTTS.");
 
-    tts::SynthesisRequest out;
+    MappedRequest mapped;
+    auto& out = mapped.request;
     out.text = req.text();
     out.language_code = req.language_code();
     out.voice_name = req.voice_name();
     out.output_sample_rate = req.sample_rate_hz();
+    if (req.has_zero_shot_data()) {
+        if (!synthesizer.is_omnivoice())
+            throw std::invalid_argument("zero_shot_data is only supported by OmniVoice.");
+        const auto& zero_shot = req.zero_shot_data();
+        if (zero_shot.encoding() != nr_audio::LINEAR_PCM)
+            throw std::invalid_argument("OmniVoice zero_shot_data requires LINEAR_PCM encoding.");
+        if (zero_shot.sample_rate_hz() <= 0)
+            throw std::invalid_argument("zero_shot_data sample_rate_hz must be positive.");
+        if (zero_shot.transcript().empty())
+            throw std::invalid_argument("OmniVoice zero_shot_data transcript is required.");
+        if (zero_shot.audio_prompt().empty() || zero_shot.audio_prompt().size() % 2 != 0)
+            throw std::invalid_argument("zero_shot_data audio_prompt must be non-empty PCM16.");
+        std::vector<float> samples(zero_shot.audio_prompt().size() / 2);
+        const auto* bytes = reinterpret_cast<const uint8_t*>(zero_shot.audio_prompt().data());
+        for (size_t i = 0; i < samples.size(); ++i) {
+            const uint16_t bits =
+                static_cast<uint16_t>(bytes[i * 2]) | static_cast<uint16_t>(bytes[i * 2 + 1]) << 8;
+            samples[i] = static_cast<int16_t>(bits) / 32768.0f;
+        }
+        mapped.prompt = synthesizer.create_voice_prompt(
+            samples.data(), samples.size(), 1, zero_shot.sample_rate_hz(), zero_shot.transcript(),
+            true);
+        out.voice_prompt = mapped.prompt.get();
+    }
+    std::optional<tts::OmniVoiceOptions> omnivoice;
+    auto omni = [&]() -> tts::OmniVoiceOptions& {
+        if (!synthesizer.is_omnivoice())
+            throw std::invalid_argument(
+                "OmniVoice custom configuration requires an OmniVoice model");
+        if (!omnivoice)
+            omnivoice = synthesizer.omnivoice_defaults();
+        return *omnivoice;
+    };
     for (const auto& entry : req.custom_configuration()) {
         const std::string key = lower_ascii(entry.first);
         const std::string& value = entry.second;
@@ -190,11 +247,34 @@ map_request(const nr_tts::SynthesizeSpeechRequest& req) {
         } else if (key == "cfg_scale" || key == "cfg-scale") {
             out.options.cfg_scale = parse_float(entry.first, value);
             out.options.override_cfg_scale = true;
+        } else if (key == "instruction" || key == "instructions") {
+            out.instruction = value;
+        } else if (key == "speed") {
+            omni().speed = parse_float(entry.first, value);
+        } else if (key == "duration" || key == "duration_s") {
+            omni().duration_s = parse_float(entry.first, value);
+        } else if (key == "omnivoice_steps") {
+            omni().num_steps = parse_int(entry.first, value);
+        } else if (key == "guidance_scale") {
+            omni().guidance_scale = parse_float(entry.first, value);
+        } else if (key == "time_shift") {
+            omni().time_shift = parse_float(entry.first, value);
+        } else if (key == "layer_penalty") {
+            omni().layer_penalty = parse_float(entry.first, value);
+        } else if (key == "position_temperature") {
+            omni().position_temperature = parse_float(entry.first, value);
+        } else if (key == "class_temperature") {
+            omni().class_temperature = parse_float(entry.first, value);
+        } else if (key == "denoise") {
+            omni().denoise = parse_bool(entry.first, value);
+        } else if (key == "postprocess_output") {
+            omni().postprocess_output = parse_bool(entry.first, value);
         } else {
             throw std::invalid_argument("Unsupported custom_configuration key: " + entry.first);
         }
     }
-    return out;
+    out.omnivoice_options = std::move(omnivoice);
+    return mapped;
 }
 
 void
@@ -243,6 +323,40 @@ log_benchmark(
               << " e2e_chunks=" << stats.e2e_chunks << "\n";
 }
 
+bool
+same_immutable_request(
+    const nr_tts::SynthesizeSpeechRequest& first, const nr_tts::SynthesizeSpeechRequest& later) {
+    if (first.language_code() != later.language_code() || first.encoding() != later.encoding() ||
+        first.sample_rate_hz() != later.sample_rate_hz() ||
+        first.voice_name() != later.voice_name() ||
+        first.custom_dictionary() != later.custom_dictionary() ||
+        first.has_zero_shot_data() != later.has_zero_shot_data() ||
+        first.custom_configuration().size() != later.custom_configuration().size())
+        return false;
+    if (first.has_zero_shot_data() &&
+        first.zero_shot_data().SerializeAsString() != later.zero_shot_data().SerializeAsString())
+        return false;
+    for (const auto& entry : first.custom_configuration()) {
+        const auto found = later.custom_configuration().find(entry.first);
+        if (found == later.custom_configuration().end() || found->second != entry.second)
+            return false;
+    }
+    return true;
+}
+
+std::string
+float_pcm_to_s16(const float* samples, size_t count) {
+    std::string pcm(count * 2, '\0');
+    for (size_t i = 0; i < count; ++i) {
+        const float sample = std::clamp(samples[i], -1.0f, 1.0f);
+        const int16_t value = static_cast<int16_t>(std::lrintf(sample * 32767.0f));
+        const uint16_t bits = static_cast<uint16_t>(value);
+        pcm[i * 2] = static_cast<char>(bits & 0xff);
+        pcm[i * 2 + 1] = static_cast<char>(bits >> 8);
+    }
+    return pcm;
+}
+
 }  // namespace
 
 GrpcTtsService::GrpcTtsService(std::shared_ptr<tts::Synthesizer> synthesizer, bool benchmark)
@@ -258,9 +372,10 @@ GrpcTtsService::Synthesize(
     grpc::ServerContext* ctx, const nr_tts::SynthesizeSpeechRequest* req,
     nr_tts::SynthesizeSpeechResponse* resp) {
     try {
+        auto mapped = map_request(*req, *synthesizer_);
         std::string audio;
         auto result =
-            synthesizer_->synthesize(map_request(*req), [&](const auto&, const std::string& pcm) {
+            synthesizer_->synthesize(mapped.request, [&](const auto&, const std::string& pcm) {
                 if (ctx->IsCancelled())
                     return false;
                 audio.append(pcm);
@@ -284,11 +399,96 @@ GrpcTtsService::SynthesizeOnline(
     grpc::ServerReaderWriter<nr_tts::SynthesizeSpeechResponse, nr_tts::SynthesizeSpeechRequest>*
         stream) {
     nr_tts::SynthesizeSpeechRequest req;
-    while (stream->Read(&req)) {
+    if (!stream->Read(&req))
+        return grpc::Status::OK;
+
+#ifdef NEMO_SPEECH_TTS_WITH_OMNIVOICE
+    if (synthesizer_->is_omnivoice()) {
         try {
+            auto mapped = map_request(req, *synthesizer_);
+            const int output_rate = mapped.request.output_sample_rate == 0
+                                        ? synthesizer_->sample_rate()
+                                        : mapped.request.output_sample_rate;
+            const nr_tts::SynthesizeSpeechRequest first_request = req;
+            const nvidia::riva::RequestId response_id = req.id();
+            tts::SynthesisMetadata metadata;
+            metadata.original_text = req.text();
+            metadata.processed_text = req.text();
+            metadata.language_code = mapped.request.language_code;
+            metadata.tokenizer_name = "omnivoice-qwen2-bpe";
+            metadata.sample_rate = output_rate;
+            auto runtime_request = synthesizer_->resolve_omnivoice_request(mapped.request);
+            runtime_request.text.clear();
+            const auto runtime_config = synthesizer_->resolve_omnivoice_config(mapped.request);
+            std::atomic<bool> write_failed{false};
+            std::unique_ptr<audio::AudioResampler> resampler;
+            if (output_rate != synthesizer_->sample_rate())
+                resampler = std::make_unique<audio::AudioResampler>(
+                    synthesizer_->sample_rate(), output_rate);
+            tts::omnivoice::BidirectionalStream bidirectional(
+                synthesizer_->omnivoice_runtime(), std::move(runtime_request), runtime_config,
+                [&](const float* samples, size_t count) {
+                    if (ctx->IsCancelled())
+                        return false;
+                    std::vector<float> converted;
+                    if (resampler) {
+                        resampler->process(samples, count, &converted);
+                        samples = converted.data();
+                        count = converted.size();
+                    }
+                    if (count == 0)
+                        return true;
+                    nr_tts::SynthesizeSpeechResponse response;
+                    response.set_audio(float_pcm_to_s16(samples, count));
+                    fill_response_metadata(response, response_id, metadata);
+                    if (!stream->Write(response)) {
+                        write_failed.store(true, std::memory_order_relaxed);
+                        return false;
+                    }
+                    return true;
+                });
+            bidirectional.push_text(req.text().data(), req.text().size(), false);
+            while (!write_failed.load(std::memory_order_relaxed) && !ctx->IsCancelled() &&
+                   stream->Read(&req)) {
+                if (!same_immutable_request(first_request, req)) {
+                    bidirectional.cancel();
+                    return invalid_arg(
+                        "later SynthesizeOnline messages may change only text and request id");
+                }
+                bidirectional.push_text(req.text().data(), req.text().size(), false);
+            }
+            if (write_failed.load(std::memory_order_relaxed) || ctx->IsCancelled()) {
+                bidirectional.cancel();
+                return grpc::Status(grpc::StatusCode::CANCELLED, "client stopped reading");
+            }
+            const auto stats = bidirectional.finish();
+            if (stats.cancelled || write_failed.load(std::memory_order_relaxed))
+                return grpc::Status(grpc::StatusCode::CANCELLED, "client stopped reading");
+            if (resampler) {
+                std::vector<float> tail;
+                resampler->finish(&tail);
+                if (!tail.empty()) {
+                    nr_tts::SynthesizeSpeechResponse response;
+                    response.set_audio(float_pcm_to_s16(tail.data(), tail.size()));
+                    fill_response_metadata(response, response_id, metadata);
+                    if (!stream->Write(response))
+                        return grpc::Status(grpc::StatusCode::CANCELLED, "client stopped reading");
+                }
+            }
+            return grpc::Status::OK;
+        }
+        catch (...) {
+            return map_exception();
+        }
+    }
+#endif
+
+    do {
+        try {
+            auto mapped = map_request(req, *synthesizer_);
             bool write_failed = false;
             auto result = synthesizer_->synthesize(
-                map_request(req),
+                mapped.request,
                 [&](const tts::SynthesisMetadata& metadata, const std::string& pcm) {
                     if (ctx->IsCancelled())
                         return false;
@@ -308,7 +508,7 @@ GrpcTtsService::SynthesizeOnline(
         catch (...) {
             return map_exception();
         }
-    }
+    } while (stream->Read(&req));
     return grpc::Status::OK;
 }
 
@@ -344,6 +544,11 @@ GrpcTtsService::GetRivaSynthesisConfig(
             params["subvoices"] = subvoices;
             params["voices"] = subvoices;
             params["voices_by_language"] = voices_by_language;
+            if (synthesizer_->is_omnivoice()) {
+                params["zero_shot"] = "true";
+                params["voice_design"] = "true";
+                params["streaming"] = "output,bidirectional";
+            }
         }
         return grpc::Status::OK;
     }

@@ -130,8 +130,12 @@ asr_configured(const AsrServerConfig& cfg) {
 
 bool
 tts_configured(const TtsServerConfig& cfg) {
-    return !cfg.server.runtime.magpie_model.empty() && !cfg.server.runtime.codec_model.empty() &&
-           !cfg.server.tokenizer_model_dir.empty();
+    const bool magpie = !cfg.server.runtime.magpie_model.empty() &&
+                        !cfg.server.runtime.codec_model.empty() &&
+                        !cfg.server.tokenizer_model_dir.empty();
+    const bool omnivoice =
+        !cfg.server.omnivoice_model.empty() && !cfg.server.omnivoice_audio_tokenizer_model.empty();
+    return magpie || omnivoice;
 }
 
 #if defined(NEMO_SPEECH_BUILD_NMT)
@@ -161,7 +165,9 @@ print_usage(const char* prog) {
     cfg.Register(parser);
     std::cerr << "Usage: " << prog << " [--asr.model.path ASR.gguf] "
               << "[--tts.magpie-model TTS.gguf --tts.codec-model CODEC.gguf "
-              << "--tts.tokenizer-model-dir DIR] [--bind HOST:PORT] [--config FILE.yaml]\n"
+              << "--tts.tokenizer-model-dir DIR | --tts.omnivoice-model TTS.gguf "
+              << "--tts.audio-tokenizer-model CODEC.gguf] [--bind HOST:PORT] "
+              << "[--config FILE.yaml]\n"
               << "                  [--<dotted.key>=VALUE ...] [legacy flags ...]\n\n"
               << "  --bind HOST:PORT   listen address (default 0.0.0.0:50051)\n"
               << "  --config FILE      YAML config file (applied before env and CLI)\n\n"
@@ -375,13 +381,24 @@ main(int argc, char** argv) {
 
     if (enable_tts) {
         configure_cuda_graph_cache_defaults();
-        std::cerr << "[riva_server] loading MagpieTTS model: "
-                  << cfg.tts.server.runtime.magpie_model << "\n";
-        std::cerr << "[riva_server] loading NanoCodec model: " << cfg.tts.server.runtime.codec_model
-                  << "\n";
+        if (!cfg.tts.server.omnivoice_model.empty()) {
+            std::cerr << "[riva_server] loading OmniVoice model: " << cfg.tts.server.omnivoice_model
+                      << "\n";
+            std::cerr << "[riva_server] loading Higgs Audio V2 tokenizer: "
+                      << cfg.tts.server.omnivoice_audio_tokenizer_model << "\n";
+        } else {
+            std::cerr << "[riva_server] loading MagpieTTS model: "
+                      << cfg.tts.server.runtime.magpie_model << "\n";
+            std::cerr << "[riva_server] loading NanoCodec model: "
+                      << cfg.tts.server.runtime.codec_model << "\n";
+        }
         try {
             nemo_speech::tts::SynthesizerConfig synthesizer_config;
             synthesizer_config.runtime = std::move(cfg.tts.server.runtime);
+            synthesizer_config.omnivoice_model = std::move(cfg.tts.server.omnivoice_model);
+            synthesizer_config.omnivoice_audio_tokenizer_model =
+                std::move(cfg.tts.server.omnivoice_audio_tokenizer_model);
+            synthesizer_config.omnivoice_options = cfg.tts.server.omnivoice_options;
             synthesizer_config.tokenizer_model_dir = std::move(cfg.tts.server.tokenizer_model_dir);
             synthesizer_config.text_normalizer_model_dir = std::move(cfg.tts.server.tn_model_dir);
             synthesizer_config.tokenizer = cfg.tts.server.tokenizer_config;

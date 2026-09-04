@@ -1,0 +1,11 @@
+# Release-only dependencies. The installed native runtime does not use these.
+accelerate
+librosa>=0.10,<1
+numpy>=1.26,<3
+pydub
+soundfile>=0.12,<1
+torch>=2.4
+torchaudio>=2.4
+transformers>=5.3
+unidecode
+zhconv

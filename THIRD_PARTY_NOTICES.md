@@ -141,6 +141,47 @@ applicable agreement is installed with the archive under
 
 ## Other incorporated third-party code and data
 
+### OmniVoice and model-derived formats
+
+The native OmniVoice frontend, denoiser, prompt encoder, codec, and release
+evaluation behavior were independently ported against these published
+implementations and model artifacts:
+
+- [`k2-fsa/OmniVoice`](https://github.com/k2-fsa/OmniVoice), pinned source
+  revision `08be0b4ccbac3e13e374e86fbfead4b4cac343e2`; source license Apache-2.0.
+- [`k2-fsa/OmniVoice`](https://huggingface.co/k2-fsa/OmniVoice), pinned model
+  revision `c5fdb5ccb189668d56333f77ba2629f4cd7535f4`; model license CC-BY-NC.
+  Converted weights are user-supplied runtime data and are not distributed by
+  this project.
+- The snapshot's `audio_tokenizer/LICENSE` contains the Boson Higgs Audio 2
+  Community License Agreement. The codec converter records that license in
+  its GGUF metadata; users must retain and comply with the upstream terms.
+- Hugging Face
+  [`transformers`](https://github.com/huggingface/transformers), including the
+  Higgs Audio V2 tokenizer model definitions; Copyright the Hugging Face team
+  and contributors; Apache-2.0.
+- [`Qwen3`](https://github.com/QwenLM/Qwen3) and its Qwen2 byte-level BPE
+  tokenizer format; Copyright the Qwen team and contributors; Apache-2.0.
+- [`descript-audio-codec`](https://github.com/descriptinc/descript-audio-codec),
+  whose DAC/Snake/residual-vector-quantizer architecture is used by the audio
+  tokenizer; Copyright Descript and contributors; MIT.
+- [`fairseq` HuBERT](https://github.com/facebookresearch/fairseq), whose
+  semantic encoder architecture is used by the audio tokenizer; Copyright
+  Meta Platforms, Inc. and affiliates; MIT.
+
+No Python implementation above is linked into or required by the installed
+runtime. The MiniMax release harness additionally imports OmniVoice's
+BSD-licensed omnilingual-ASR normalization port and uses the separately
+downloaded Apache-2.0 `k2-fsa/TTS_eval_datasets` data plus the
+`openai/whisper-large-v3-turbo` model under their published terms.
+
+### ICU and Unicode data
+
+OmniVoice's native Unicode-aware tokenizer and duration rules use ICU.
+Copyright (c) 1995-2026 International Business Machines Corporation and
+others. ICU is distributed under the Unicode/ICU license; see
+[`unicode-org/icu`](https://github.com/unicode-org/icu/blob/main/LICENSE).
+
 ### miniaudio
 
 - Source: [`mackron/miniaudio`](https://github.com/mackron/miniaudio), version

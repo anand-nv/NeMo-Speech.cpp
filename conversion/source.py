@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import json
 import tarfile
 import tempfile
 from contextlib import contextmanager
@@ -120,6 +121,64 @@ def list_hugging_face_files(repo_id: str, revision: str | None = None) -> list[s
     from huggingface_hub import HfApi
 
     return list(HfApi().list_repo_files(repo_id, revision=revision))
+
+
+def read_json_config(path: Path) -> dict[str, Any]:
+    """Read a Hugging Face ``config.json`` without importing Transformers."""
+    config_path = path / "config.json" if path.is_dir() else path
+    if config_path.name != "config.json" or not config_path.is_file():
+        raise RuntimeError(f"Hugging Face source contains no config.json: {path}")
+    try:
+        value = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise RuntimeError(f"cannot read Hugging Face configuration: {config_path}") from error
+    if not isinstance(value, dict):
+        raise RuntimeError(f"Hugging Face configuration is not a mapping: {config_path}")
+    return value
+
+
+def download_hugging_face_config(
+    repo_id: str, cache_dir: Path, revision: str | None = None
+) -> Path:
+    """Download only config.json for architecture detection."""
+    from huggingface_hub import hf_hub_download
+
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    return Path(
+        hf_hub_download(
+            repo_id=repo_id,
+            filename="config.json",
+            revision=revision,
+            cache_dir=str(cache_dir),
+        )
+    )
+
+
+def resolve_hugging_face_source(
+    source: str,
+    cache_dir: Path,
+    revision: str | None = None,
+    *,
+    allow_patterns: list[str] | None = None,
+) -> Path:
+    """Resolve a local HF directory or download a repository snapshot."""
+    local = Path(source).expanduser()
+    if local.exists():
+        if not local.is_dir():
+            raise RuntimeError(f"Hugging Face checkpoint source is not a directory: {local}")
+        return local
+
+    from huggingface_hub import snapshot_download
+
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    return Path(
+        snapshot_download(
+            repo_id=source,
+            revision=revision,
+            cache_dir=str(cache_dir),
+            allow_patterns=allow_patterns,
+        )
+    )
 
 
 def download_nemo_checkpoint(repo_id: str, cache_dir: Path, revision: str | None = None) -> Path:

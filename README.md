@@ -11,7 +11,7 @@ NeMo-Speech.cpp is NVIDIA's official local speech inference solution, with day-0
 | Speech recognition | [Nemotron 3.5 ASR Streaming 0.6B](https://huggingface.co/nvidia/nemotron-3.5-asr-streaming-0.6b), [Nemotron Speech Streaming 0.6B](https://huggingface.co/nvidia/nemotron-speech-streaming-en-0.6b), [Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3), and [Parakeet CTC 1.1B](https://huggingface.co/nvidia/parakeet-ctc-1.1b) |
 | Speaker diarization | [Streaming Sortformer 4-speaker v2](https://huggingface.co/nvidia/diar_streaming_sortformer_4spk-v2), standalone or combined with ASR |
 | Text and speech translation | [Riva Translate 4B Instruct v2](https://huggingface.co/nvidia/Riva-Translate-4B-Instruct-v2), with composed ASR-to-NMT-to-TTS speech translation |
-| Speech synthesis | [MagpieTTS Multilingual 357M](https://huggingface.co/nvidia/magpie_tts_multilingual_357m) with [NeMo NanoCodec](https://huggingface.co/nvidia/nemo-nano-codec-22khz-1.89kbps-21.5fps) |
+| Speech synthesis | [MagpieTTS Multilingual 357M](https://huggingface.co/nvidia/magpie_tts_multilingual_357m) with [NeMo NanoCodec](https://huggingface.co/nvidia/nemo-nano-codec-22khz-1.89kbps-21.5fps), plus opt-in native [OmniVoice](docs/tts/omnivoice.md) |
 | Speech processing | [Silero VAD](https://github.com/snakers4/silero-vad), punctuation and capitalization, endpointing, text normalization, and subtitles |
 
 ## Contents
@@ -142,6 +142,7 @@ Windows, and container instructions are in
 | [Installation](docs/install.md) | Native releases, Windows, upgrades, and manual verification |
 | [CLI guide](docs/cli.md) | Transcription, subtitles, directories, diarization, NMT, TTS, and tooling |
 | [Model conversion](docs/model-conversion.md) | Convert NeMo and Hugging Face checkpoints to runtime GGUF files |
+| [OmniVoice](docs/tts/omnivoice.md) | Pinned conversion, CPU/CUDA use, cloning, streaming, and release validation |
 | [Servers](docs/server.md) | HTTP playground/realtime serving and the separate Riva-compatible gRPC server |
 | [HTTP API reference](docs/api.md) | Every endpoint's request fields, responses, and the realtime protocol |
 | [Native SDK](docs/sdk.md) | CMake components, C ABI lifetimes, threading, and examples |

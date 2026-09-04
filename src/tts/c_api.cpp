@@ -4,6 +4,7 @@
 // Every exported function is noexcept in spirit: exceptions become a status plus
 // a thread-local last-error string. No C++ types or exceptions cross the ABI.
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -14,8 +15,13 @@
 #include <utility>
 #include <vector>
 
+#include "audio_resampler.h"
+#include "c_legacy_abi.h"
 #include "nemo_speech/tts.h"
 #include "synthesizer.h"
+#ifdef NEMO_SPEECH_TTS_WITH_OMNIVOICE
+#include "omnivoice/runtime.h"
+#endif
 
 namespace tts_core = nemo_speech::tts;
 
@@ -25,7 +31,33 @@ struct nemo_speech_tts_synthesizer {
     int sample_rate = 0;
 };
 
+struct nemo_speech_tts_voice_prompt {
+#ifdef NEMO_SPEECH_TTS_WITH_OMNIVOICE
+    std::unique_ptr<tts_core::omnivoice::VoicePrompt> prompt;
+#endif
+};
+
+struct nemo_speech_tts_stream {
+#ifdef NEMO_SPEECH_TTS_WITH_OMNIVOICE
+    std::unique_ptr<tts_core::omnivoice::BidirectionalStream> stream;
+    std::unique_ptr<nemo_speech::audio::AudioResampler> resampler;
+    nemo_speech_tts_pcm_callback callback = nullptr;
+    void* user_data = nullptr;
+    int32_t output_rate = 24000;
+    uint64_t output_samples = 0;
+#endif
+};
+
 namespace {
+
+static_assert(
+    sizeof(NemoSpeechTtsRuntimeConfigV1) ==
+        offsetof(nemo_speech_tts_runtime_config, omnivoice_options),
+    "the current runtime config must retain its exact v1 prefix");
+static_assert(
+    sizeof(NemoSpeechTtsSynthesisOptionsV1) ==
+        offsetof(nemo_speech_tts_synthesis_options, omnivoice_options),
+    "the current synthesis options must retain their exact v1 prefix");
 
 thread_local std::string g_last_error;
 
@@ -128,6 +160,42 @@ runtime_config_defaults() {
     return tts_core::MagpieRuntimeConfig{};
 }
 
+tts_core::OmniVoiceOptions
+to_omnivoice_options(const nemo_speech_tts_omnivoice_options* o) {
+    tts_core::OmniVoiceOptions options;
+    if (!o)
+        return options;
+    if (HAS_FIELD(o, nemo_speech_tts_omnivoice_options, num_steps))
+        options.num_steps = o->num_steps;
+    if (HAS_FIELD(o, nemo_speech_tts_omnivoice_options, guidance_scale))
+        options.guidance_scale = o->guidance_scale;
+    if (HAS_FIELD(o, nemo_speech_tts_omnivoice_options, t_shift))
+        options.time_shift = o->t_shift;
+    if (HAS_FIELD(o, nemo_speech_tts_omnivoice_options, layer_penalty_factor))
+        options.layer_penalty = o->layer_penalty_factor;
+    if (HAS_FIELD(o, nemo_speech_tts_omnivoice_options, position_temperature))
+        options.position_temperature = o->position_temperature;
+    if (HAS_FIELD(o, nemo_speech_tts_omnivoice_options, class_temperature))
+        options.class_temperature = o->class_temperature;
+    if (HAS_FIELD(o, nemo_speech_tts_omnivoice_options, denoise))
+        options.denoise = o->denoise;
+    if (HAS_FIELD(o, nemo_speech_tts_omnivoice_options, postprocess_output))
+        options.postprocess_output = o->postprocess_output;
+    if (HAS_FIELD(o, nemo_speech_tts_omnivoice_options, audio_chunk_duration_s))
+        options.audio_chunk_duration_s = o->audio_chunk_duration_s;
+    if (HAS_FIELD(o, nemo_speech_tts_omnivoice_options, audio_chunk_threshold_s))
+        options.audio_chunk_threshold_s = o->audio_chunk_threshold_s;
+    if (HAS_FIELD(o, nemo_speech_tts_omnivoice_options, pad_duration_s))
+        options.pad_duration_s = o->pad_duration_s;
+    if (HAS_FIELD(o, nemo_speech_tts_omnivoice_options, fade_duration_s))
+        options.fade_duration_s = o->fade_duration_s;
+    if (HAS_FIELD(o, nemo_speech_tts_omnivoice_options, speed))
+        options.speed = o->speed;
+    if (HAS_FIELD(o, nemo_speech_tts_omnivoice_options, duration_s))
+        options.duration_s = o->duration_s;
+    return options;
+}
+
 tts_core::MagpieRuntimeConfig
 to_config(const nemo_speech_tts_synthesizer_config* c) {
     tts_core::MagpieRuntimeConfig cfg = runtime_config_defaults();
@@ -220,7 +288,16 @@ synthesizer_config_of(const nemo_speech_tts_synthesizer_config* c) {
         if (HAS_FIELD(model, nemo_speech_tts_model_config, text_normalizer_model_dir)) {
             cfg.text_normalizer_model_dir = str_or_empty(model->text_normalizer_model_dir);
         }
+        if (HAS_FIELD(model, nemo_speech_tts_model_config, omnivoice_model))
+            cfg.omnivoice_model = str_or_empty(model->omnivoice_model);
+        if (HAS_FIELD(model, nemo_speech_tts_model_config, omnivoice_audio_tokenizer_model))
+            cfg.omnivoice_audio_tokenizer_model =
+                str_or_empty(model->omnivoice_audio_tokenizer_model);
     }
+    if (c && HAS_FIELD(c, nemo_speech_tts_synthesizer_config, runtime) && c->runtime &&
+        HAS_FIELD(c->runtime, nemo_speech_tts_runtime_config, omnivoice_options) &&
+        c->runtime->omnivoice_options)
+        cfg.omnivoice_options = to_omnivoice_options(c->runtime->omnivoice_options);
     if (HAS_FIELD(c, nemo_speech_tts_synthesizer_config, default_language_code))
         cfg.default_language_code = str_or_empty(c->default_language_code);
     if (HAS_FIELD(c, nemo_speech_tts_synthesizer_config, default_voice_name))
@@ -271,6 +348,80 @@ output_rate_of(const nemo_speech_tts_synthesis_options* o) {
                ? o->output_sample_rate
                : 0;
 }
+
+std::optional<tts_core::OmniVoiceOptions>
+request_omnivoice_options(const nemo_speech_tts_synthesis_options* o) {
+    if (!HAS_FIELD(o, nemo_speech_tts_synthesis_options, omnivoice_options) ||
+        !o->omnivoice_options)
+        return std::nullopt;
+    return to_omnivoice_options(o->omnivoice_options);
+}
+
+#ifdef NEMO_SPEECH_TTS_WITH_OMNIVOICE
+std::vector<uint8_t>
+float_pcm_to_s16(const std::vector<float>& samples) {
+    std::vector<uint8_t> output(samples.size() * 2);
+    for (size_t i = 0; i < samples.size(); ++i) {
+        const float sample = std::clamp(samples[i], -1.0f, 1.0f);
+        const int16_t value = static_cast<int16_t>(std::lrintf(sample * 32767.0f));
+        const uint16_t bits = static_cast<uint16_t>(value);
+        output[i * 2] = static_cast<uint8_t>(bits & 0xff);
+        output[i * 2 + 1] = static_cast<uint8_t>((bits >> 8) & 0xff);
+    }
+    return output;
+}
+
+bool
+stream_emit(nemo_speech_tts_stream* stream, const float* samples, size_t count) {
+    std::vector<float> converted;
+    if (stream->resampler) {
+        stream->resampler->process(samples, count, &converted);
+    } else {
+        converted.assign(samples, samples + count);
+    }
+    stream->output_samples += converted.size();
+    if (converted.empty())
+        return true;
+    const auto pcm = float_pcm_to_s16(converted);
+    return stream->callback(pcm.data(), pcm.size(), stream->user_data);
+}
+
+tts_core::MagpieSynthesisStats
+stream_stats_to_generic(
+    const tts_core::omnivoice::RuntimeStats& stats, int32_t output_rate, uint64_t output_samples) {
+    tts_core::MagpieSynthesisStats result;
+    result.sample_rate = output_rate;
+    result.generated_frames = stats.generated_frames;
+    result.chunks = stats.chunks;
+    result.e2e_chunks = stats.chunks;
+    result.samples_written = output_samples;
+    result.elapsed_s = stats.elapsed_seconds;
+    result.audio_s = output_rate > 0 ? static_cast<double>(output_samples) / output_rate : 0.0;
+    result.rtf = result.audio_s > 0.0 ? result.elapsed_s / result.audio_s : 0.0;
+    result.rtfx = result.elapsed_s > 0.0 ? result.audio_s / result.elapsed_s : 0.0;
+    result.e2e_rtfx = result.rtfx;
+    return result;
+}
+
+tts_core::SynthesisRequest
+stream_request_of(const nemo_speech_tts_synthesis_options* options) {
+    tts_core::SynthesisRequest request;
+    request.language_code = language_of(options);
+    request.voice_name = voice_of(options);
+    request.output_sample_rate = output_rate_of(options);
+    request.options = to_options(options);
+    request.omnivoice_options = request_omnivoice_options(options);
+    if (HAS_FIELD(options, nemo_speech_tts_synthesis_options, instruction))
+        request.instruction = str_or_empty(options->instruction);
+    if (HAS_FIELD(options, nemo_speech_tts_synthesis_options, voice_prompt) &&
+        options->voice_prompt) {
+        if (!options->voice_prompt->prompt)
+            throw std::invalid_argument("voice prompt handle is empty");
+        request.voice_prompt = options->voice_prompt->prompt.get();
+    }
+    return request;
+}
+#endif
 
 nemo_speech_tts_synthesis_stats
 to_c_stats(const tts_core::MagpieSynthesisStats& s) {
@@ -375,7 +526,7 @@ guard(F&& f) {
 extern "C" {
 
 nemo_speech_tts_runtime_config
-nemo_speech_tts_runtime_config_default(void) {
+nemo_speech_tts_runtime_config_default_v2(void) {
     const tts_core::MagpieRuntimeConfig d = runtime_config_defaults();
     nemo_speech_tts_runtime_config c;
     std::memset(&c, 0, sizeof(c));
@@ -411,7 +562,7 @@ nemo_speech_tts_runtime_config_default(void) {
 }
 
 nemo_speech_tts_synthesis_options
-nemo_speech_tts_synthesis_options_default(void) {
+nemo_speech_tts_synthesis_options_default_v2(void) {
     nemo_speech_tts_synthesis_options o;
     std::memset(&o, 0, sizeof(o));
     o.size = sizeof(o);
@@ -419,6 +570,29 @@ nemo_speech_tts_synthesis_options_default(void) {
     o.seed = -1;
     o.steps = -1;
     o.top_k = -1;
+    return o;
+}
+
+nemo_speech_tts_omnivoice_options
+nemo_speech_tts_omnivoice_options_default(void) {
+    const tts_core::OmniVoiceOptions d;
+    nemo_speech_tts_omnivoice_options o;
+    std::memset(&o, 0, sizeof(o));
+    o.size = sizeof(o);
+    o.num_steps = d.num_steps;
+    o.guidance_scale = d.guidance_scale;
+    o.t_shift = d.time_shift;
+    o.layer_penalty_factor = d.layer_penalty;
+    o.position_temperature = d.position_temperature;
+    o.class_temperature = d.class_temperature;
+    o.denoise = d.denoise;
+    o.postprocess_output = d.postprocess_output;
+    o.audio_chunk_duration_s = d.audio_chunk_duration_s;
+    o.audio_chunk_threshold_s = d.audio_chunk_threshold_s;
+    o.pad_duration_s = d.pad_duration_s;
+    o.fade_duration_s = d.fade_duration_s;
+    o.speed = d.speed;
+    o.duration_s = d.duration_s;
     return o;
 }
 
@@ -438,14 +612,6 @@ nemo_speech_tts_create(
     *out = nullptr;
     return guard([&] {
         tts_core::SynthesizerConfig synthesizer_config = synthesizer_config_of(cfg);
-        if (synthesizer_config.runtime.magpie_model.empty()) {
-            set_last_error("synthesizer config: model.magpie_model is required");
-            return NEMO_SPEECH_TTS_ERROR_INVALID_ARGUMENT;
-        }
-        if (synthesizer_config.runtime.codec_model.empty()) {
-            set_last_error("synthesizer config: model.codec_model is required");
-            return NEMO_SPEECH_TTS_ERROR_INVALID_ARGUMENT;
-        }
         auto h = std::make_unique<nemo_speech_tts_synthesizer>();
         h->synthesizer = std::make_unique<tts_core::Synthesizer>(std::move(synthesizer_config));
         h->speaker_names = h->synthesizer->speaker_names();
@@ -496,6 +662,19 @@ nemo_speech_tts_synthesize_text(
         request.voice_name = voice_of(options);
         request.output_sample_rate = output_rate_of(options);
         request.options = to_options(options);
+        request.omnivoice_options = request_omnivoice_options(options);
+        if (HAS_FIELD(options, nemo_speech_tts_synthesis_options, instruction))
+            request.instruction = str_or_empty(options->instruction);
+        if (HAS_FIELD(options, nemo_speech_tts_synthesis_options, voice_prompt) &&
+            options->voice_prompt) {
+#ifdef NEMO_SPEECH_TTS_WITH_OMNIVOICE
+            if (!options->voice_prompt->prompt)
+                throw std::invalid_argument("voice prompt handle is empty");
+            request.voice_prompt = options->voice_prompt->prompt.get();
+#else
+            throw std::invalid_argument("OmniVoice support is not enabled");
+#endif
+        }
         const tts_core::SynthesisResult result =
             synthesizer->synthesizer->synthesize(request, make_callback(callback, user_data));
         if (result.cancelled) {
@@ -505,6 +684,202 @@ nemo_speech_tts_synthesize_text(
         copy_stats(stats_out, result.stats);
         return NEMO_SPEECH_TTS_OK;
     });
+}
+
+nemo_speech_tts_status
+nemo_speech_tts_voice_prompt_create(
+    nemo_speech_tts_synthesizer* synthesizer, const float* interleaved_pcm, size_t frames,
+    int32_t channels, int32_t sample_rate, const char* transcript, bool preprocess,
+    nemo_speech_tts_voice_prompt** out) {
+    if (!synthesizer || !out)
+        return NEMO_SPEECH_TTS_ERROR_INVALID_ARGUMENT;
+    *out = nullptr;
+    return guard([&] {
+#ifdef NEMO_SPEECH_TTS_WITH_OMNIVOICE
+        auto prompt = std::make_unique<nemo_speech_tts_voice_prompt>();
+        prompt->prompt = synthesizer->synthesizer->create_voice_prompt(
+            interleaved_pcm, frames, channels, sample_rate, str_or_empty(transcript), preprocess);
+        *out = prompt.release();
+        return NEMO_SPEECH_TTS_OK;
+#else
+        (void)interleaved_pcm;
+        (void)frames;
+        (void)channels;
+        (void)sample_rate;
+        (void)transcript;
+        (void)preprocess;
+        throw std::invalid_argument("OmniVoice support is not enabled");
+        return NEMO_SPEECH_TTS_ERROR_INVALID_ARGUMENT;
+#endif
+    });
+}
+
+nemo_speech_tts_status
+nemo_speech_tts_voice_prompt_load(
+    nemo_speech_tts_synthesizer* synthesizer, const char* path,
+    nemo_speech_tts_voice_prompt** out) {
+    if (!synthesizer || !out)
+        return NEMO_SPEECH_TTS_ERROR_INVALID_ARGUMENT;
+    *out = nullptr;
+    return guard([&] {
+#ifdef NEMO_SPEECH_TTS_WITH_OMNIVOICE
+        auto prompt = std::make_unique<nemo_speech_tts_voice_prompt>();
+        prompt->prompt = synthesizer->synthesizer->load_voice_prompt(str_or_empty(path));
+        *out = prompt.release();
+        return NEMO_SPEECH_TTS_OK;
+#else
+        (void)path;
+        throw std::invalid_argument("OmniVoice support is not enabled");
+        return NEMO_SPEECH_TTS_ERROR_INVALID_ARGUMENT;
+#endif
+    });
+}
+
+nemo_speech_tts_status
+nemo_speech_tts_voice_prompt_save(
+    const nemo_speech_tts_synthesizer* synthesizer, const nemo_speech_tts_voice_prompt* prompt,
+    const char* path) {
+    if (!synthesizer || !prompt)
+        return NEMO_SPEECH_TTS_ERROR_INVALID_ARGUMENT;
+    return guard([&] {
+#ifdef NEMO_SPEECH_TTS_WITH_OMNIVOICE
+        if (!prompt->prompt)
+            throw std::invalid_argument("voice prompt handle is empty");
+        synthesizer->synthesizer->save_voice_prompt(*prompt->prompt, str_or_empty(path));
+        return NEMO_SPEECH_TTS_OK;
+#else
+        (void)path;
+        throw std::invalid_argument("OmniVoice support is not enabled");
+        return NEMO_SPEECH_TTS_ERROR_INVALID_ARGUMENT;
+#endif
+    });
+}
+
+void
+nemo_speech_tts_voice_prompt_destroy(nemo_speech_tts_voice_prompt* prompt) {
+    delete prompt;
+}
+
+nemo_speech_tts_status
+nemo_speech_tts_stream_create(
+    nemo_speech_tts_synthesizer* synthesizer,
+    const nemo_speech_tts_synthesis_options* immutable_options,
+    nemo_speech_tts_pcm_callback callback, void* user_data, nemo_speech_tts_stream** out) {
+    if (!synthesizer || !callback || !out)
+        return NEMO_SPEECH_TTS_ERROR_INVALID_ARGUMENT;
+    *out = nullptr;
+    return guard([&] {
+#ifdef NEMO_SPEECH_TTS_WITH_OMNIVOICE
+        if (!synthesizer->synthesizer->is_omnivoice())
+            throw std::invalid_argument("bidirectional streams require an OmniVoice model");
+        tts_core::SynthesisRequest request = stream_request_of(immutable_options);
+        if (request.options.speaker > 0)
+            throw std::invalid_argument("OmniVoice only supports automatic speaker index 0");
+        const std::string voice = request.voice_name;
+        if (!voice.empty() && voice != "auto" && voice != "omnivoice.auto" && voice != "0")
+            throw std::invalid_argument("OmniVoice voice_name must be auto or speaker index 0");
+        const int32_t output_rate =
+            request.output_sample_rate == 0 ? 24000 : request.output_sample_rate;
+        if (output_rate < 8000 || output_rate > 24000)
+            throw std::invalid_argument("output sample rate must be between 8000 and 24000 Hz");
+        auto handle = std::make_unique<nemo_speech_tts_stream>();
+        handle->callback = callback;
+        handle->user_data = user_data;
+        handle->output_rate = output_rate;
+        if (output_rate != 24000)
+            handle->resampler =
+                std::make_unique<nemo_speech::audio::AudioResampler>(24000, output_rate);
+        nemo_speech_tts_stream* raw = handle.get();
+        auto runtime_request = synthesizer->synthesizer->resolve_omnivoice_request(request);
+        runtime_request.text.clear();
+        const auto runtime_config = synthesizer->synthesizer->resolve_omnivoice_config(request);
+        handle->stream = std::make_unique<tts_core::omnivoice::BidirectionalStream>(
+            synthesizer->synthesizer->omnivoice_runtime(), std::move(runtime_request),
+            runtime_config,
+            [raw](const float* samples, size_t count) { return stream_emit(raw, samples, count); });
+        *out = handle.release();
+        return NEMO_SPEECH_TTS_OK;
+#else
+        (void)immutable_options;
+        (void)user_data;
+        throw std::invalid_argument("OmniVoice support is not enabled");
+        return NEMO_SPEECH_TTS_ERROR_INVALID_ARGUMENT;
+#endif
+    });
+}
+
+nemo_speech_tts_status
+nemo_speech_tts_stream_push_text(
+    nemo_speech_tts_stream* stream, const char* bytes, size_t count, bool explicit_commit) {
+    if (!stream)
+        return NEMO_SPEECH_TTS_ERROR_INVALID_ARGUMENT;
+    return guard([&] {
+#ifdef NEMO_SPEECH_TTS_WITH_OMNIVOICE
+        stream->stream->push_text(bytes, count, explicit_commit);
+        return NEMO_SPEECH_TTS_OK;
+#else
+        (void)bytes;
+        (void)count;
+        (void)explicit_commit;
+        throw std::invalid_argument("OmniVoice support is not enabled");
+        return NEMO_SPEECH_TTS_ERROR_INVALID_ARGUMENT;
+#endif
+    });
+}
+
+nemo_speech_tts_status
+nemo_speech_tts_stream_finish(
+    nemo_speech_tts_stream* stream, nemo_speech_tts_synthesis_stats* stats_out) {
+    if (!stream)
+        return NEMO_SPEECH_TTS_ERROR_INVALID_ARGUMENT;
+    if (!validate_stats_out(stats_out))
+        return NEMO_SPEECH_TTS_ERROR_INVALID_ARGUMENT;
+    return guard([&] {
+#ifdef NEMO_SPEECH_TTS_WITH_OMNIVOICE
+        if (stream->stream->stats().cancelled) {
+            set_last_error("synthesis stream cancelled");
+            return NEMO_SPEECH_TTS_ERROR_CANCELLED;
+        }
+        auto stats = stream->stream->finish();
+        if (stats.cancelled) {
+            set_last_error("synthesis stream cancelled");
+            return NEMO_SPEECH_TTS_ERROR_CANCELLED;
+        }
+        if (stream->resampler) {
+            std::vector<float> tail;
+            stream->resampler->finish(&tail);
+            stream->output_samples += tail.size();
+            if (!tail.empty()) {
+                const auto pcm = float_pcm_to_s16(tail);
+                if (!stream->callback(pcm.data(), pcm.size(), stream->user_data)) {
+                    set_last_error("synthesis stream cancelled by callback");
+                    return NEMO_SPEECH_TTS_ERROR_CANCELLED;
+                }
+            }
+        }
+        copy_stats(
+            stats_out, stream_stats_to_generic(stats, stream->output_rate, stream->output_samples));
+        return NEMO_SPEECH_TTS_OK;
+#else
+        throw std::invalid_argument("OmniVoice support is not enabled");
+        return NEMO_SPEECH_TTS_ERROR_INVALID_ARGUMENT;
+#endif
+    });
+}
+
+void
+nemo_speech_tts_stream_cancel(nemo_speech_tts_stream* stream) {
+#ifdef NEMO_SPEECH_TTS_WITH_OMNIVOICE
+    if (stream && stream->stream)
+        stream->stream->cancel();
+#else
+    (void)stream;
+#endif
+}
+
+void
+nemo_speech_tts_stream_destroy(nemo_speech_tts_stream* stream) {
+    delete stream;
 }
 
 nemo_speech_tts_status

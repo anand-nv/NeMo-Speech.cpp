@@ -1,0 +1,42 @@
+{
+  "format_version": 1,
+  "selection": "first-five-non-empty-lines-in-file-order",
+  "utterances_per_language": 5,
+  "selected_jsonl_sha256": "8885adc3c468e321892d053ab1dfe2d9096e5ece4e8f7324fa076f98bf1ac3cb",
+  "minimax_source": "MiniMaxAI_TTS-Multilingual-Test-Set",
+  "reference_dataset": {
+    "repository": "k2-fsa/TTS_eval_datasets",
+    "revision": "699beb854ab40a8a38bd48285e67e22697fc6e63",
+    "manifest": "minimax_multilingual_24.jsonl"
+  },
+  "asr": {
+    "repository": "openai/whisper-large-v3-turbo",
+    "revision": "41f01f3fe87f28c78e2fbf8b568835947dd65ed9"
+  },
+  "languages": [
+    {"file":"arabic.txt","sha256":"d637c91c15cfc5c1b8c2802abf17c5dade00ce8dea10d460065752c2dce365fc","omnivoice_id":"arb","iso639_3":"arb","whisper":"arabic","metric":"cer"},
+    {"file":"cantonese.txt","sha256":"5dfd079f952a6e105fca5c4397fb65dc725d67c8e5636f653f778f4dd43be4d9","omnivoice_id":"yue","iso639_3":"yue","whisper":"cantonese","metric":"cer"},
+    {"file":"chinese.txt","sha256":"7abb3ae1c852c42e510e3949d605448b1b414024a0b86bef3872bc62094aa348","omnivoice_id":"zh","iso639_3":"cmn","whisper":"chinese","metric":"cer"},
+    {"file":"czech.txt","sha256":"97c562f9ab665194fb90c3b1e2221e0fea30c1bfa20c71c515c0af3496331f88","omnivoice_id":"cs","iso639_3":"ces","whisper":"czech","metric":"wer"},
+    {"file":"dutch.txt","sha256":"c41f745b11c1565ae0642a8e936b9bd01f5d794d2dfb0675a03e7f7c4be8d36d","omnivoice_id":"nl","iso639_3":"nld","whisper":"dutch","metric":"wer"},
+    {"file":"english.txt","sha256":"1020375295c73eef7ff66a611885b0ba91aaa2b6d07cfe76ca2332e05f942e30","omnivoice_id":"en","iso639_3":"eng","whisper":"english","metric":"wer"},
+    {"file":"finnish.txt","sha256":"00ab295f1ed4ef4ed41c36ee1a19a18a34b06f57d3a46bbc6b6365f88adc9e13","omnivoice_id":"fi","iso639_3":"fin","whisper":"finnish","metric":"wer"},
+    {"file":"french.txt","sha256":"21565cc756f64cf62a05d88029da9e26387f1a89a5f6fc48c9aabb9704407195","omnivoice_id":"fr","iso639_3":"fra","whisper":"french","metric":"wer"},
+    {"file":"german.txt","sha256":"1513ee8d92589eb8f67a29ef74de25397113a2a45219a63c89189345820f3434","omnivoice_id":"de","iso639_3":"deu","whisper":"german","metric":"wer"},
+    {"file":"greek.txt","sha256":"4b565e071a538851f0dd57148ebd36ff2a196597750e15b1561ab25e370f5786","omnivoice_id":"el","iso639_3":"ell","whisper":"greek","metric":"cer"},
+    {"file":"hindi.txt","sha256":"d6d1f248767d811d4ea62b60941d539b19bbe40d301133d3021ff66a57a008f4","omnivoice_id":"hi","iso639_3":"hin","whisper":"hindi","metric":"cer"},
+    {"file":"indonesian.txt","sha256":"e62912905635f4766711df23008f4075e0f9e8f57d42d2b9c9aa3b6912055f1e","omnivoice_id":"id","iso639_3":"ind","whisper":"indonesian","metric":"wer"},
+    {"file":"italian.txt","sha256":"fd44f746345a838cc4e762eb78e6452df3d21d1e0e3a350e23e736c8753a9740","omnivoice_id":"it","iso639_3":"ita","whisper":"italian","metric":"wer"},
+    {"file":"japanese.txt","sha256":"764dc6534be5160274264f5cad46fd90cbfaf760afcc645a3a34cb80ec7bc94b","omnivoice_id":"ja","iso639_3":"jpn","whisper":"japanese","metric":"cer"},
+    {"file":"korean.txt","sha256":"0d74acf689f809a1a8c54fa84142c4312f043da98e0e6d3a52878d42b94bb777","omnivoice_id":"ko","iso639_3":"kor","whisper":"korean","metric":"cer"},
+    {"file":"polish.txt","sha256":"db59155d3b6531967941d4c992f8feabd471f4b635ff51085099dfd2b06db1eb","omnivoice_id":"pl","iso639_3":"pol","whisper":"polish","metric":"wer"},
+    {"file":"portuguese.txt","sha256":"3bd252f1f4b892b80e3ec5ff0743fcfe5ac443d77e5de1b7f90036a43954728b","omnivoice_id":"pt","iso639_3":"por","whisper":"portuguese","metric":"wer"},
+    {"file":"romanian.txt","sha256":"3fcd9cacbe1d4ecd1479304fa6d519d9f39eeca3379713a880aae845069069ec","omnivoice_id":"ro","iso639_3":"ron","whisper":"romanian","metric":"wer"},
+    {"file":"russian.txt","sha256":"fa0896107850d233861477aa56e6b8bae2df95921f25ec7942480d6e538cedc0","omnivoice_id":"ru","iso639_3":"rus","whisper":"russian","metric":"wer"},
+    {"file":"spanish.txt","sha256":"c8189d9de6f405682827dfd95ab1e1fad011948dbbff36989fa44bb07b2d0c47","omnivoice_id":"es","iso639_3":"spa","whisper":"spanish","metric":"wer"},
+    {"file":"thai.txt","sha256":"94f1bce48b8f7a08d6c4ff7df3529c5861669cc317948fdb9e24d5471847fc19","omnivoice_id":"th","iso639_3":"tha","whisper":"thai","metric":"cer"},
+    {"file":"turkish.txt","sha256":"97b2f99e0f9528d690ca77506594eec0433b5f2ee10e2f41370980ff0a4db9ec","omnivoice_id":"tr","iso639_3":"tur","whisper":"turkish","metric":"wer"},
+    {"file":"ukrainian.txt","sha256":"13d0c5c5b5ef48420518f6b56de7b0a891c2daafbc134812dc0aaf522c4c6699","omnivoice_id":"uk","iso639_3":"ukr","whisper":"ukrainian","metric":"wer"},
+    {"file":"vietnamese.txt","sha256":"043d58caf19892d7af8f05748dc145d999970021a330c12cc5736bb5b3f30dd8","omnivoice_id":"vi","iso639_3":"vie","whisper":"vietnamese","metric":"cer"}
+  ]
+}

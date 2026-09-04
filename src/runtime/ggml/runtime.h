@@ -11,6 +11,7 @@
 #include <ggml-cpp.h>
 #include <ggml.h>
 
+#include <array>
 #include <chrono>
 #include <cstdarg>
 #include <cstdint>
@@ -71,6 +72,9 @@ class GGUFLoader {
     ggml_type get_tensor_type(const std::string& tensor_name);
     // Returns the on-disk rank (1-4), or 0 when the tensor is absent.
     int get_tensor_n_dims(const std::string& tensor_name) const;
+    // Returns GGML-order dimensions (ne0..ne3). Missing tensors return zeros.
+    std::array<int64_t, GGML_MAX_DIMS> get_tensor_shape(const std::string& tensor_name) const;
+    std::vector<std::string> get_tensor_names() const;
     bool has_tensor(const std::string& tensor_name) const;
 
     // Metadata accessors (return `def` if key missing).
@@ -79,6 +83,7 @@ class GGUFLoader {
     float get_f32(const std::string& key, float def = 0.0f) const;
     bool get_bool(const std::string& key, bool def = false) const;
     std::string get_str(const std::string& key, const std::string& def = "") const;
+    std::vector<float> get_f32_array(const std::string& key) const;
     std::vector<int32_t> get_i32_array(const std::string& key) const;
     std::vector<std::string> get_str_array(const std::string& key) const;
     bool has_key(const std::string& key) const;
@@ -90,6 +95,7 @@ class GGUFLoader {
     std::map<std::string, std::tuple<ggml_type, uint64_t>> m_tensor_infos;
     // Per-tensor on-disk dimensionality.
     std::map<std::string, int> m_tensor_n_dims;
+    std::map<std::string, std::array<int64_t, GGML_MAX_DIMS>> m_tensor_shapes;
     std::vector<char> m_tensor_buffer;
 };
 

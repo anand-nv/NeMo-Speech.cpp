@@ -238,6 +238,7 @@ GGUFLoader::GGUFLoader(const std::string& path) {
         for (struct ggml_tensor* t = ggml_get_first_tensor(ctx); t != nullptr;
              t = ggml_get_next_tensor(ctx, t)) {
             m_tensor_n_dims[t->name] = ggml_n_dims(t);
+            m_tensor_shapes[t->name] = {t->ne[0], t->ne[1], t->ne[2], t->ne[3]};
         }
         ggml_free(ctx);
     }
@@ -246,7 +247,7 @@ GGUFLoader::GGUFLoader(const std::string& path) {
     GGMLF_LOG_INFO("GGUF file size: %ld\n", m_file->size);
 
     auto n_tensors = gguf_get_n_tensors(m_context.get());
-    GGMLF_LOG_INFO("GGUF has %d tensors\n", n_tensors);
+    GGMLF_LOG_INFO("GGUF has %ld tensors\n", static_cast<long>(n_tensors));
 
     const uint64_t data_offset = gguf_get_data_offset(m_context.get());
     // Pre-size the reusable read buffer; get_tensor_file_data grows it if needed.
@@ -321,6 +322,23 @@ GGUFLoader::get_tensor_n_dims(const std::string& tensor_name) const {
     return it == m_tensor_n_dims.end() ? 0 : it->second;
 }
 
+std::array<int64_t, GGML_MAX_DIMS>
+GGUFLoader::get_tensor_shape(const std::string& tensor_name) const {
+    auto it = m_tensor_shapes.find(tensor_name);
+    return it == m_tensor_shapes.end() ? std::array<int64_t, GGML_MAX_DIMS>{0, 0, 0, 0}
+                                       : it->second;
+}
+
+std::vector<std::string>
+GGUFLoader::get_tensor_names() const {
+    std::vector<std::string> names;
+    names.reserve(m_tensor_infos.size());
+    for (const auto& item : m_tensor_infos) {
+        names.push_back(item.first);
+    }
+    return names;
+}
+
 bool
 GGUFLoader::has_key(const std::string& key) const {
     return gguf_find_key(m_context.get(), key.c_str()) >= 0;
@@ -381,6 +399,20 @@ GGUFLoader::get_str_array(const std::string& key) const {
     for (int i = 0; i < n; i++) {
         out.emplace_back(gguf_get_arr_str(m_context.get(), id, i));
     }
+    return out;
+}
+
+std::vector<float>
+GGUFLoader::get_f32_array(const std::string& key) const {
+    std::vector<float> out;
+    const int id = gguf_find_key(m_context.get(), key.c_str());
+    if (id < 0 || gguf_get_kv_type(m_context.get(), id) != GGUF_TYPE_ARRAY ||
+        gguf_get_arr_type(m_context.get(), id) != GGUF_TYPE_FLOAT32) {
+        return out;
+    }
+    const size_t n = gguf_get_arr_n(m_context.get(), id);
+    const auto* data = static_cast<const float*>(gguf_get_arr_data(m_context.get(), id));
+    out.assign(data, data + n);
     return out;
 }
 

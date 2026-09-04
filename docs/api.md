@@ -101,19 +101,33 @@ Text-to-speech (OpenAI-compatible JSON subset).
 | `input` | string | required | text to synthesize |
 | `voice` | string | model default | local voice name, model-qualified voice name, or zero-based speaker index |
 | `language` | string | model default | language code |
-| `speed` | number | `1.0` | only `1.0` is accepted; other values return 400 |
-| `sample_rate` | int | model default | output sample rate, from 8000 Hz through the model rate (22050 Hz for the supported NanoCodec model) |
+| `instructions` | string | empty | OmniVoice voice-design instruction; rejected by other families |
+| `speed` | number | `1.0` | OmniVoice speaking speed; other families accept only `1.0` |
+| `sample_rate` | int | model default | output sample rate, from 8000 Hz through the model rate (22050 Hz for NanoCodec, 24000 Hz for OmniVoice) |
 | `response_format` | string | `wav` | `wav` or `pcm` |
+| `stream` | bool | `false` | progressively transfer finalized chunks; requires `response_format: "pcm"` |
 
 Response: mono signed PCM16, either in a WAV container or raw little-endian
-bytes with the matching content type. The complete audio is buffered before the
-HTTP response; streaming synthesis is not part of this compatibility subset.
+bytes with the matching content type. Complete responses are buffered. A
+streamed raw-PCM response uses HTTP chunked transfer and writes each finalized
+linguistic chunk without an invalid open-ended WAV header.
 
 Local voice names are case-insensitive and are listed in the `voices` field of
 the speech entry returned by `GET /v1/models`. `<model-id>.<voice>` is also
 accepted. `default` and supported OpenAI voice aliases such as `alloy` select
 the server's configured default local speaker; they do not provide the
 corresponding hosted OpenAI voices. An unrecognized local name returns 400.
+For OmniVoice, `auto` is the single advertised voice. Voice cloning is exposed
+through the native API, saved prompt files, CLI, and Riva `ZeroShotData`, not a
+base64 JSON convention on this endpoint.
+
+The C header keeps `nemo_speech_tts_runtime_config_default()` and
+`nemo_speech_tts_synthesis_options_default()` as source-compatible inline
+wrappers. FFI clients that resolve functions by symbol name must use the
+current `*_default_v2` symbols. The original unversioned symbols remain in the
+SONAME-1 library with their pre-OmniVoice return layouts for already-compiled
+callers; this avoids the otherwise unsafe ABI change caused by growing a
+structure returned by value.
 
 ## POST /v1/translations
 

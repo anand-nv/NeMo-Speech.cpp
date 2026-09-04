@@ -7,16 +7,29 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
 #include "magpietts/runtime.h"
+#include "omnivoice/options.h"
 #include "tts/tokenizer/tokenizer.h"
 
 namespace nemo_speech::tts {
 
+namespace omnivoice {
+class Runtime;
+class BidirectionalStream;
+struct VoicePrompt;
+struct RuntimeConfig;
+struct RuntimeSynthesisRequest;
+}  // namespace omnivoice
+
 struct SynthesizerConfig {
     MagpieRuntimeConfig runtime;
+    std::string omnivoice_model;
+    std::string omnivoice_audio_tokenizer_model;
+    std::optional<OmniVoiceOptions> omnivoice_options;
     std::string tokenizer_model_dir;
     std::string text_normalizer_model_dir;
     MagpieTokenizerConfig tokenizer;
@@ -30,6 +43,9 @@ struct SynthesisRequest {
     std::string voice_name;
     int output_sample_rate = 0;  // 0 = model rate
     MagpieSynthesisOptions options;
+    std::optional<OmniVoiceOptions> omnivoice_options;
+    std::string instruction;
+    const omnivoice::VoicePrompt* voice_prompt = nullptr;
 };
 
 struct SynthesisMetadata {
@@ -87,6 +103,21 @@ class Synthesizer {
     const std::string& default_language_code() const;
     int default_speaker() const;
     bool text_normalization_enabled() const;
+    bool is_omnivoice() const;
+    OmniVoiceOptions omnivoice_defaults() const;
+
+    std::unique_ptr<omnivoice::VoicePrompt> create_voice_prompt(
+        const float* interleaved_pcm, size_t frames, int channels, int sample_rate,
+        const std::string& transcript, bool preprocess = true);
+    std::unique_ptr<omnivoice::VoicePrompt> load_voice_prompt(const std::string& path) const;
+    void save_voice_prompt(const omnivoice::VoicePrompt& prompt, const std::string& path) const;
+
+#ifdef NEMO_SPEECH_TTS_WITH_OMNIVOICE
+    omnivoice::Runtime& omnivoice_runtime();
+    omnivoice::RuntimeConfig resolve_omnivoice_config(const SynthesisRequest& request) const;
+    omnivoice::RuntimeSynthesisRequest resolve_omnivoice_request(
+        const SynthesisRequest& request) const;
+#endif
 
    private:
     int resolve_speaker(const std::string& voice_name) const;

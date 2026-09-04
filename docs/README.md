@@ -31,6 +31,8 @@ Start with:
 - [Models](tts/models.md) - ready-to-run MagpieTTS and NanoCodec GGUF downloads,
   tokenizer setup, and custom conversion.
 - [Configuration](tts/configuration.md) - `tts.*` key reference and serving.
+- [OmniVoice](tts/omnivoice.md) - pinned conversion, voice cloning/design,
+  CPU/CUDA backends, three synthesis modes, and WER/CER validation.
 
 ## NMT
 

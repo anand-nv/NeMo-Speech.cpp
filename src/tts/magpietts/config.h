@@ -2,10 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 
+#include <optional>
 #include <string>
 
 #include "magpietts.h"
 #include "runtime.h"
+#include "tts/omnivoice/options.h"
 
 namespace nemo_speech::common {
 class ParameterParser;
@@ -15,6 +17,9 @@ namespace nemo_speech::tts {
 
 struct MagpieTtsServerConfig {
     MagpieRuntimeConfig runtime;
+    std::string omnivoice_model;
+    std::string omnivoice_audio_tokenizer_model;
+    std::optional<OmniVoiceOptions> omnivoice_options;
     std::string tokenizer_model_dir;
     std::string tn_model_dir;
     MagpieTokenizerConfig tokenizer_config;

@@ -9,12 +9,14 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <iostream>
 #include <limits>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
+#include "audio_file.h"
 #include "nemo_speech/tts.h"
 
 namespace {
@@ -24,6 +26,13 @@ struct Params {
     std::string codec_model;
     std::string tokenizer_model_dir;
     std::string text_normalizer_model_dir;
+    std::string omnivoice_model;
+    std::string audio_tokenizer_model;
+    std::string instruction;
+    std::string prompt_wav;
+    std::string prompt_text;
+    std::string prompt_file;
+    std::string save_prompt;
     std::string text;
     std::string text_file;
     std::string token_text;
@@ -33,6 +42,8 @@ struct Params {
     std::string voice;
     nemo_speech_tts_runtime_config runtime = nemo_speech_tts_runtime_config_default();
     nemo_speech_tts_synthesis_options options = nemo_speech_tts_synthesis_options_default();
+    nemo_speech_tts_omnivoice_options omnivoice = nemo_speech_tts_omnivoice_options_default();
+    bool bidirectional = false;
     bool help = false;
 };
 
@@ -40,8 +51,10 @@ void
 usage(const char* argv0) {
     std::fprintf(
         stderr,
-        "usage: %s --tts.magpie-model MODEL --tts.codec-model MODEL \\\n"
-        "          --tts.tokenizer-model-dir DIR --tts.text TEXT --tts.wav-out FILE [options]\n"
+        "usage: %s (--tts.magpie-model MODEL --tts.codec-model MODEL \\\n"
+        "          --tts.tokenizer-model-dir DIR | --tts.omnivoice-model MODEL \\\n"
+        "          --tts.audio-tokenizer-model MODEL) --tts.text TEXT \\\n"
+        "          --tts.wav-out FILE [options]\n"
         "\n"
         "Input (choose text or tokens):\n"
         "  --tts.text TEXT                 Text to synthesize\n"
@@ -53,6 +66,8 @@ usage(const char* argv0) {
         "  --tts.magpie-model FILE         MagpieTTS GGUF\n"
         "  --tts.codec-model FILE          NanoCodec decoder GGUF\n"
         "  --tts.tokenizer-model-dir DIR   Extracted Magpie tokenizer assets\n"
+        "  --tts.omnivoice-model FILE      OmniVoice denoiser GGUF\n"
+        "  --tts.audio-tokenizer-model FILE  Higgs Audio V2 tokenizer GGUF\n"
         "  --tts.tn-model-dir DIR          Optional text-normalization grammars\n"
         "  --tts.wav-out FILE              Output mono PCM WAV\n"
         "  --tts.output-sample-rate HZ     Resample output (default: model rate)\n"
@@ -60,12 +75,23 @@ usage(const char* argv0) {
         "Synthesis:\n"
         "  --tts.language-code CODE        Language code (default: en-US)\n"
         "  --tts.voice-name NAME           Voice name or speaker index\n"
+        "  --tts.instruction TEXT          OmniVoice voice-design instruction\n"
+        "  --tts.prompt-wav FILE           OmniVoice clone reference WAV\n"
+        "  --tts.prompt-text TEXT          Mandatory reference transcript\n"
+        "  --tts.prompt-file FILE          Load a reusable OmniVoice prompt\n"
+        "  --tts.save-prompt FILE          Save the encoded prompt\n"
+        "  --tts.bidirectional             Commit stdin/text at punctuation boundaries\n"
         "  --tts.speaker N                 Speaker index\n"
         "  --tts.seed N                    Sampling seed\n"
-        "  --tts.steps N                   Maximum decoder frames\n"
+        "  --tts.steps N                   Magpie frame limit / OmniVoice denoising steps\n"
         "  --tts.top-k N                   Top-k sampling\n"
         "  --tts.temperature F             Sampling temperature\n"
         "  --tts.cfg-scale F               Classifier-free guidance scale\n"
+        "  --tts.speed F                   OmniVoice speaking speed\n"
+        "  --tts.duration F                OmniVoice exact duration in seconds\n"
+        "  --tts.position-temperature F    OmniVoice reveal-position temperature\n"
+        "  --tts.class-temperature F       OmniVoice class-sampling temperature\n"
+        "  --tts.backend cpu|cuda          Force OmniVoice backend\n"
         "  --threads N                     CPU threads\n"
         "  --tts.codec-threads N           Codec CPU threads\n"
         "  --tts.codec-cpu                 Run NanoCodec on CPU\n"
@@ -122,6 +148,14 @@ parse_args(int argc, char** argv, Params& params) {
             if (!(next = value(arg.c_str())))
                 return false;
             params.codec_model = next;
+        } else if (arg == "--tts.omnivoice-model") {
+            if (!(next = value(arg.c_str())))
+                return false;
+            params.omnivoice_model = next;
+        } else if (arg == "--tts.audio-tokenizer-model") {
+            if (!(next = value(arg.c_str())))
+                return false;
+            params.audio_tokenizer_model = next;
         } else if (arg == "--tts.tokenizer-model-dir") {
             if (!(next = value(arg.c_str())))
                 return false;
@@ -158,6 +192,28 @@ parse_args(int argc, char** argv, Params& params) {
             if (!(next = value(arg.c_str())))
                 return false;
             params.voice = next;
+        } else if (arg == "--tts.instruction") {
+            if (!(next = value(arg.c_str())))
+                return false;
+            params.instruction = next;
+        } else if (arg == "--tts.prompt-wav") {
+            if (!(next = value(arg.c_str())))
+                return false;
+            params.prompt_wav = next;
+        } else if (arg == "--tts.prompt-text") {
+            if (!(next = value(arg.c_str())))
+                return false;
+            params.prompt_text = next;
+        } else if (arg == "--tts.prompt-file") {
+            if (!(next = value(arg.c_str())))
+                return false;
+            params.prompt_file = next;
+        } else if (arg == "--tts.save-prompt") {
+            if (!(next = value(arg.c_str())))
+                return false;
+            params.save_prompt = next;
+        } else if (arg == "--tts.bidirectional") {
+            params.bidirectional = true;
         } else if (arg == "--tts.speaker") {
             if (!(next = value(arg.c_str())))
                 return false;
@@ -170,6 +226,7 @@ parse_args(int argc, char** argv, Params& params) {
             if (!(next = value(arg.c_str())))
                 return false;
             params.options.steps = parse_int(next, arg.c_str());
+            params.omnivoice.num_steps = params.options.steps;
         } else if (arg == "--tts.top-k") {
             if (!(next = value(arg.c_str())))
                 return false;
@@ -184,6 +241,34 @@ parse_args(int argc, char** argv, Params& params) {
                 return false;
             params.options.cfg_scale = parse_float(next, arg.c_str());
             params.options.override_cfg_scale = true;
+            params.omnivoice.guidance_scale = params.options.cfg_scale;
+        } else if (arg == "--tts.speed") {
+            if (!(next = value(arg.c_str())))
+                return false;
+            params.omnivoice.speed = parse_float(next, arg.c_str());
+        } else if (arg == "--tts.duration") {
+            if (!(next = value(arg.c_str())))
+                return false;
+            params.omnivoice.duration_s = parse_float(next, arg.c_str());
+        } else if (arg == "--tts.position-temperature") {
+            if (!(next = value(arg.c_str())))
+                return false;
+            params.omnivoice.position_temperature = parse_float(next, arg.c_str());
+        } else if (arg == "--tts.class-temperature") {
+            if (!(next = value(arg.c_str())))
+                return false;
+            params.omnivoice.class_temperature = parse_float(next, arg.c_str());
+        } else if (arg == "--tts.backend") {
+            if (!(next = value(arg.c_str())))
+                return false;
+            if (std::strcmp(next, "cpu") == 0)
+                params.runtime.lt_backend = NEMO_SPEECH_TTS_BACKEND_CPU;
+            else if (std::strcmp(next, "cuda") == 0)
+                params.runtime.lt_backend = NEMO_SPEECH_TTS_BACKEND_CUDA;
+            else {
+                std::fprintf(stderr, "%s must be cpu or cuda\n", arg.c_str());
+                return false;
+            }
         } else if (arg == "--tts.output-sample-rate") {
             if (!(next = value(arg.c_str())))
                 return false;
@@ -332,11 +417,27 @@ main(int argc, char** argv) {
 
     const bool has_text = !params.text.empty();
     const bool has_tokens = !params.token_text.empty();
-    if (params.magpie_model.empty() || params.codec_model.empty() || params.output.empty() ||
-        has_text == has_tokens || (has_text && params.tokenizer_model_dir.empty())) {
+    const bool has_magpie = !params.magpie_model.empty() || !params.codec_model.empty() ||
+                            !params.tokenizer_model_dir.empty();
+    const bool has_omnivoice =
+        !params.omnivoice_model.empty() || !params.audio_tokenizer_model.empty();
+    const bool prompt_only = !params.save_prompt.empty() && !has_text && !has_tokens;
+    if ((has_magpie == has_omnivoice) ||
+        (has_magpie && (params.magpie_model.empty() || params.codec_model.empty())) ||
+        (has_omnivoice &&
+         (params.omnivoice_model.empty() || params.audio_tokenizer_model.empty())) ||
+        (!prompt_only &&
+         (params.output.empty() || (!params.bidirectional && has_text == has_tokens))) ||
+        (has_text && has_magpie && params.tokenizer_model_dir.empty()) ||
+        (has_tokens && has_omnivoice) ||
+        (prompt_only && params.prompt_wav.empty() && params.prompt_file.empty()) ||
+        (!params.prompt_wav.empty() && params.prompt_text.empty()) ||
+        (!params.prompt_wav.empty() && !params.prompt_file.empty())) {
         usage(argv[0]);
         return 2;
     }
+    if (has_omnivoice && params.language == "en-US")
+        params.language = "en";
 
     nemo_speech_tts_model_config model{};
     model.size = sizeof(model);
@@ -347,6 +448,12 @@ main(int argc, char** argv) {
     model.text_normalizer_model_dir = params.text_normalizer_model_dir.empty()
                                           ? nullptr
                                           : params.text_normalizer_model_dir.c_str();
+    model.omnivoice_model =
+        params.omnivoice_model.empty() ? nullptr : params.omnivoice_model.c_str();
+    model.omnivoice_audio_tokenizer_model =
+        params.audio_tokenizer_model.empty() ? nullptr : params.audio_tokenizer_model.c_str();
+    if (has_omnivoice)
+        params.runtime.omnivoice_options = &params.omnivoice;
 
     nemo_speech_tts_synthesizer_config config{};
     config.size = sizeof(config);
@@ -364,9 +471,69 @@ main(int argc, char** argv) {
 
     params.options.language_code = params.language.c_str();
     params.options.voice_name = params.voice.empty() ? nullptr : params.voice.c_str();
+    params.options.instruction = params.instruction.empty() ? nullptr : params.instruction.c_str();
+    if (has_omnivoice)
+        params.options.omnivoice_options = &params.omnivoice;
+    nemo_speech_tts_voice_prompt* prompt = nullptr;
+    if (!params.prompt_file.empty()) {
+        status =
+            nemo_speech_tts_voice_prompt_load(synthesizer, params.prompt_file.c_str(), &prompt);
+    } else if (!params.prompt_wav.empty()) {
+        try {
+            const auto reference = nemo_speech::audio::load_wav_file(params.prompt_wav);
+            status = nemo_speech_tts_voice_prompt_create(
+                synthesizer, reference.samples.data(), reference.samples.size(), 1,
+                reference.sample_rate, params.prompt_text.c_str(), true, &prompt);
+        }
+        catch (const std::exception& error) {
+            std::fprintf(stderr, "failed to load prompt WAV: %s\n", error.what());
+            nemo_speech_tts_destroy(synthesizer);
+            return 1;
+        }
+    }
+    if (status != NEMO_SPEECH_TTS_OK) {
+        std::fprintf(stderr, "failed to prepare voice prompt: %s\n", nemo_speech_tts_last_error());
+        nemo_speech_tts_destroy(synthesizer);
+        return 1;
+    }
+    if (prompt && !params.save_prompt.empty()) {
+        status = nemo_speech_tts_voice_prompt_save(synthesizer, prompt, params.save_prompt.c_str());
+        if (status != NEMO_SPEECH_TTS_OK) {
+            std::fprintf(stderr, "failed to save voice prompt: %s\n", nemo_speech_tts_last_error());
+            nemo_speech_tts_voice_prompt_destroy(prompt);
+            nemo_speech_tts_destroy(synthesizer);
+            return 1;
+        }
+    }
+    if (prompt_only) {
+        nemo_speech_tts_voice_prompt_destroy(prompt);
+        nemo_speech_tts_destroy(synthesizer);
+        return 0;
+    }
+    params.options.voice_prompt = prompt;
     std::vector<uint8_t> pcm;
     nemo_speech_tts_synthesis_stats stats = nemo_speech_tts_synthesis_stats_default();
-    if (has_text) {
+    if (params.bidirectional) {
+        nemo_speech_tts_stream* stream = nullptr;
+        status =
+            nemo_speech_tts_stream_create(synthesizer, &params.options, collect_pcm, &pcm, &stream);
+        if (status == NEMO_SPEECH_TTS_OK) {
+            if (has_text) {
+                status = nemo_speech_tts_stream_push_text(
+                    stream, params.text.data(), params.text.size(), true);
+            } else {
+                std::string line;
+                while (status == NEMO_SPEECH_TTS_OK && std::getline(std::cin, line)) {
+                    line.push_back('\n');
+                    status =
+                        nemo_speech_tts_stream_push_text(stream, line.data(), line.size(), true);
+                }
+            }
+            if (status == NEMO_SPEECH_TTS_OK)
+                status = nemo_speech_tts_stream_finish(stream, &stats);
+        }
+        nemo_speech_tts_stream_destroy(stream);
+    } else if (has_text) {
         status = nemo_speech_tts_synthesize_text(
             synthesizer, &params.options, params.text.c_str(), collect_pcm, &pcm, &stats);
     } else {
@@ -385,11 +552,13 @@ main(int argc, char** argv) {
 
     if (status != NEMO_SPEECH_TTS_OK) {
         std::fprintf(stderr, "synthesis failed: %s\n", nemo_speech_tts_last_error());
+        nemo_speech_tts_voice_prompt_destroy(prompt);
         nemo_speech_tts_destroy(synthesizer);
         return 1;
     }
     const int sample_rate =
         stats.sample_rate > 0 ? stats.sample_rate : nemo_speech_tts_sample_rate(synthesizer);
+    nemo_speech_tts_voice_prompt_destroy(prompt);
     nemo_speech_tts_destroy(synthesizer);
 
     if (!write_wav(params.output, sample_rate, pcm)) {

@@ -559,6 +559,8 @@ struct Server::Impl {
                 item["owned_by"] = "local";
                 item["capability"] = "speech";
                 item["device"] = this->models.device_label();
+                item["zero_shot"] = model->is_omnivoice();
+                item["voice_design"] = model->is_omnivoice();
                 Value::Array voices;
                 for (const auto& voice : model->speaker_names()) voices.emplace_back(voice);
                 item["voices"] = std::move(voices);
@@ -678,6 +680,7 @@ struct Server::Impl {
                 synthesis.text = body.string_or("input");
                 synthesis.language_code = body.string_or("language");
                 synthesis.voice_name = openai_voice(*synthesizer, body.string_or("voice"));
+                synthesis.instruction = body.string_or("instructions");
                 if (const auto* sample_rate = body.find("sample_rate")) {
                     if (!sample_rate->is_number())
                         throw std::invalid_argument("sample_rate must be a positive integer");
@@ -691,12 +694,45 @@ struct Server::Impl {
                 if (synthesis.text.empty())
                     throw std::invalid_argument("input is required");
                 const double speed = body.number_or("speed", 1.0);
-                if (std::abs(speed - 1.0) > 1e-9)
-                    throw std::invalid_argument(
-                        "this model does not support changing speech speed");
+                if (std::abs(speed - 1.0) > 1e-9) {
+                    if (!synthesizer->is_omnivoice())
+                        throw std::invalid_argument(
+                            "this model does not support changing speech speed");
+                    auto options = synthesizer->omnivoice_defaults();
+                    options.speed = speed;
+                    synthesis.omnivoice_options = options;
+                }
                 const std::string format = body.string_or("response_format", "wav");
                 if (format != "wav" && format != "pcm")
                     throw std::invalid_argument("response_format must be wav or pcm");
+                const bool stream_output = body.bool_or("stream", false);
+                if (stream_output && format != "pcm")
+                    throw std::invalid_argument("stream=true requires response_format=pcm");
+
+                if (stream_output) {
+                    response.set_chunked_content_provider(
+                        "audio/pcm", [synthesizer, synthesis = std::move(synthesis)](
+                                         size_t offset, httplib::DataSink& sink) mutable {
+                            if (offset != 0) {
+                                sink.done();
+                                return true;
+                            }
+                            try {
+                                const auto result = synthesizer->synthesize(
+                                    synthesis, [&](const auto&, const std::string& chunk) {
+                                        return sink.is_writable() &&
+                                               sink.write(chunk.data(), chunk.size());
+                                    });
+                                (void)result;
+                                sink.done();
+                                return true;
+                            }
+                            catch (...) {
+                                return false;
+                            }
+                        });
+                    return;
+                }
 
                 uint64_t generation = 0;
                 if (this->config.preempt_tts) {

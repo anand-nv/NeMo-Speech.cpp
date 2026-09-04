@@ -9,9 +9,27 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from .source import list_hugging_face_files, read_nemo_config, resolve_nemo_source
+from .source import (
+    download_hugging_face_config,
+    list_hugging_face_files,
+    read_json_config,
+    read_nemo_config,
+    resolve_nemo_source,
+)
 
-ARCHITECTURES = ("asr", "diarization", "pnc", "vad", "tts", "codec", "nmt")
+ARCHITECTURES = (
+    "asr",
+    "diarization",
+    "pnc",
+    "vad",
+    "tts",
+    "codec",
+    "omnivoice",
+    "higgs_audio_v2_tokenizer",
+    "nmt",
+)
+
+HF_ARCHITECTURES = ("omnivoice", "higgs_audio_v2_tokenizer", "nmt")
 
 
 @dataclass
@@ -48,6 +66,18 @@ def _architecture_from_config(config: dict) -> str:
     )
 
 
+def _architecture_from_hf_config(config: dict) -> str:
+    model_type = str(config.get("model_type", "")).lower()
+    architectures = {
+        str(value).lower() for value in config.get("architectures", []) if isinstance(value, str)
+    }
+    if model_type == "omnivoice" or "omnivoice" in architectures:
+        return "omnivoice"
+    if model_type == "higgs_audio_v2_tokenizer" or "higgsaudiov2tokenizermodel" in architectures:
+        return "higgs_audio_v2_tokenizer"
+    return "nmt"
+
+
 def _resolve_nemo_for_detection(request: ConversionRequest) -> Path | None:
     local = Path(request.source).expanduser()
     if local.exists():
@@ -71,7 +101,14 @@ def detect_architecture(request: ConversionRequest) -> tuple[str, Path | None]:
     if request.architecture != "auto":
         if request.architecture not in ARCHITECTURES:
             raise ValueError(f"unknown architecture: {request.architecture}")
-        if request.architecture in ("vad", "nmt"):
+        if request.architecture in ("vad", *HF_ARCHITECTURES):
+            local = Path(request.source).expanduser()
+            if request.architecture != "vad" and local.exists():
+                if not local.is_dir():
+                    raise RuntimeError(
+                        f"Hugging Face checkpoint source is not a directory: {local}"
+                    )
+                return request.architecture, local
             return request.architecture, None
         return (
             request.architecture,
@@ -80,9 +117,22 @@ def detect_architecture(request: ConversionRequest) -> tuple[str, Path | None]:
 
     if request.source.lower() in ("silero", "silero-vad", "vad"):
         return "vad", None
+    local = Path(request.source).expanduser()
+    if local.exists() and local.is_dir() and (local / "config.json").is_file():
+        architecture = _architecture_from_hf_config(read_json_config(local))
+        return architecture, local if architecture != "nmt" else None
+
     checkpoint = _resolve_nemo_for_detection(request)
     if checkpoint is None:
-        return "nmt", None
+        config_path = (
+            local / "config.json"
+            if local.exists()
+            else download_hugging_face_config(request.source, request.cache_dir, request.revision)
+        )
+        architecture = _architecture_from_hf_config(read_json_config(config_path))
+        return architecture, (
+            local if architecture != "nmt" and local.exists() and local.is_dir() else None
+        )
     return _architecture_from_config(read_nemo_config(checkpoint)), checkpoint
 
 
@@ -94,6 +144,8 @@ def _normalized_outtype(architecture: str, outtype: str) -> str:
         "vad": "f32",
         "tts": "f16",
         "codec": "f16",
+        "omnivoice": "f16",
+        "higgs_audio_v2_tokenizer": "f16",
         "nmt": "f16",
     }
     value = defaults[architecture] if outtype == "auto" else outtype.lower()
@@ -116,6 +168,8 @@ def _normalized_outtype(architecture: str, outtype: str) -> str:
         "vad": {"f32"},
         "tts": {"f16", "f32"},
         "codec": {"f16", "f32"},
+        "omnivoice": {"f16", "f32"},
+        "higgs_audio_v2_tokenizer": {"f16", "f32"},
         "nmt": {"f32", "f16", "bf16", "q8_0", "auto"},
     }
     if value not in supported[architecture]:
@@ -200,6 +254,14 @@ def convert_model(request: ConversionRequest) -> str:
 
         assert checkpoint is not None
         codec.convert(checkpoint, request.outfile, outtype, request.metadata_json)
+    elif architecture == "omnivoice":
+        from . import omnivoice
+
+        omnivoice.convert(request, outtype)
+    elif architecture == "higgs_audio_v2_tokenizer":
+        from . import higgs_audio_v2_tokenizer
+
+        higgs_audio_v2_tokenizer.convert(request, outtype)
     else:
         _convert_nmt(request, outtype)
     return architecture

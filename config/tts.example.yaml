@@ -15,6 +15,14 @@ tts:
   tokenizer-model-dir: /models/magpie-tts/extracted
   # tn-model-dir: /models/en_tn_grammars_cased   # written-form -> spoken-form TN
 
+  # OmniVoice alternative: remove the three Magpie fields above and set both:
+  # omnivoice-model: /models/omnivoice/omnivoice.f16.gguf
+  # audio-tokenizer-model: /models/omnivoice/higgs-audio-v2-tokenizer.f16.gguf
+  # omnivoice-steps: 32
+  # omnivoice-guidance: 2.0
+  # omnivoice-chunk-duration: 15.0
+  # omnivoice-chunk-threshold: 30.0
+
   language-code: en-US
   speaker: 0
 

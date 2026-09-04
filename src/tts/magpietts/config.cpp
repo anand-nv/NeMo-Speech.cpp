@@ -318,6 +318,103 @@ struct MagpieStreamParamsConfig {
 void
 MagpieTtsServerConfig::Register(common::ParameterParser& parser) {
     register_runtime_config(parser, runtime);
+    parser.Register("omnivoice-model", &omnivoice_model, "OmniVoice denoiser GGUF path");
+    parser.Register(
+        "audio-tokenizer-model", &omnivoice_audio_tokenizer_model,
+        "Higgs Audio V2 tokenizer GGUF path");
+    auto omni = [this]() -> OmniVoiceOptions& {
+        if (!omnivoice_options)
+            omnivoice_options.emplace();
+        return *omnivoice_options;
+    };
+    parser.Register(
+        "omnivoice-steps",
+        [omni](const std::string& value) mutable {
+            omni().num_steps = common::detail::to_int("tts.omnivoice-steps", value);
+        },
+        "OmniVoice denoising steps");
+    parser.Register(
+        "omnivoice-guidance",
+        [omni](const std::string& value) mutable {
+            omni().guidance_scale = common::detail::to_float("tts.omnivoice-guidance", value);
+        },
+        "OmniVoice classifier-free guidance scale");
+    parser.Register(
+        "omnivoice-time-shift",
+        [omni](const std::string& value) mutable {
+            omni().time_shift = common::detail::to_float("tts.omnivoice-time-shift", value);
+        },
+        "OmniVoice reveal-schedule time shift");
+    parser.Register(
+        "omnivoice-layer-penalty",
+        [omni](const std::string& value) mutable {
+            omni().layer_penalty = common::detail::to_float("tts.omnivoice-layer-penalty", value);
+        },
+        "OmniVoice codebook-layer confidence penalty");
+    parser.Register(
+        "omnivoice-position-temperature",
+        [omni](const std::string& value) mutable {
+            omni().position_temperature =
+                common::detail::to_float("tts.omnivoice-position-temperature", value);
+        },
+        "OmniVoice reveal-position temperature");
+    parser.Register(
+        "omnivoice-class-temperature",
+        [omni](const std::string& value) mutable {
+            omni().class_temperature =
+                common::detail::to_float("tts.omnivoice-class-temperature", value);
+        },
+        "OmniVoice token-class temperature");
+    parser.Register(
+        "omnivoice-speed",
+        [omni](const std::string& value) mutable {
+            omni().speed = common::detail::to_float("tts.omnivoice-speed", value);
+        },
+        "OmniVoice speaking speed");
+    parser.Register(
+        "omnivoice-duration",
+        [omni](const std::string& value) mutable {
+            omni().duration_s = common::detail::to_float("tts.omnivoice-duration", value);
+        },
+        "OmniVoice fixed duration in seconds; zero selects automatic duration");
+    parser.Register(
+        "omnivoice-denoise",
+        [omni](const std::string& value) mutable {
+            omni().denoise = common::detail::to_bool("tts.omnivoice-denoise", value);
+        },
+        "Enable the OmniVoice prompt denoise token");
+    parser.Register(
+        "omnivoice-postprocess",
+        [omni](const std::string& value) mutable {
+            omni().postprocess_output = common::detail::to_bool("tts.omnivoice-postprocess", value);
+        },
+        "Enable OmniVoice silence and level post-processing");
+    parser.Register(
+        "omnivoice-chunk-duration",
+        [omni](const std::string& value) mutable {
+            omni().audio_chunk_duration_s =
+                common::detail::to_float("tts.omnivoice-chunk-duration", value);
+        },
+        "OmniVoice target duration for long-form chunks");
+    parser.Register(
+        "omnivoice-chunk-threshold",
+        [omni](const std::string& value) mutable {
+            omni().audio_chunk_threshold_s =
+                common::detail::to_float("tts.omnivoice-chunk-threshold", value);
+        },
+        "OmniVoice duration threshold for long-form chunking");
+    parser.Register(
+        "omnivoice-pad-duration",
+        [omni](const std::string& value) mutable {
+            omni().pad_duration_s = common::detail::to_float("tts.omnivoice-pad-duration", value);
+        },
+        "OmniVoice leading and trailing silence duration");
+    parser.Register(
+        "omnivoice-fade-duration",
+        [omni](const std::string& value) mutable {
+            omni().fade_duration_s = common::detail::to_float("tts.omnivoice-fade-duration", value);
+        },
+        "OmniVoice leading and trailing fade duration");
     parser.Register(
         "tokenizer-model-dir", &tokenizer_model_dir, "Extracted Magpie .nemo directory");
     parser.Register("tn-model-dir", &tn_model_dir, "Sparrowhawk TTS TN grammar dir");

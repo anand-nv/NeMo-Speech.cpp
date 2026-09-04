@@ -98,6 +98,7 @@ option(NEMO_SPEECH_WITH_NMT        "Deprecated alias for NEMO_SPEECH_BUILD_NMT" 
 option(NEMO_SPEECH_WITH_NORM       "Build shared Sparrowhawk/OpenFST text normalization" OFF)
 option(NEMO_SPEECH_TTS_WITH_JA     "Build Japanese MagpieTTS tokenizer support" OFF)
 option(NEMO_SPEECH_TTS_WITH_ZH     "Build Mandarin MagpieTTS tokenizer support" OFF)
+option(NEMO_SPEECH_TTS_WITH_OMNIVOICE "Build native OmniVoice TTS support" OFF)
 option(NEMO_SPEECH_BUILD_ASR       "Build automatic speech recognition" ON)
 option(NEMO_SPEECH_BUILD_DIAR      "Build standalone and ASR-integrated diarization" ON)
 option(NEMO_SPEECH_BUILD_TTS       "Build text-to-speech" ON)
@@ -145,9 +146,10 @@ endif()
 if(NEMO_SPEECH_WITH_FLASHLIGHT AND NOT NEMO_SPEECH_BUILD_ASR)
     message(FATAL_ERROR "NEMO_SPEECH_WITH_FLASHLIGHT requires ASR")
 endif()
-if((NEMO_SPEECH_TTS_WITH_JA OR NEMO_SPEECH_TTS_WITH_ZH) AND
+if((NEMO_SPEECH_TTS_WITH_JA OR NEMO_SPEECH_TTS_WITH_ZH OR
+    NEMO_SPEECH_TTS_WITH_OMNIVOICE) AND
    NOT NEMO_SPEECH_BUILD_TTS)
-    message(FATAL_ERROR "Optional TTS tokenizers require NEMO_SPEECH_BUILD_TTS=ON")
+    message(FATAL_ERROR "Optional TTS features require NEMO_SPEECH_BUILD_TTS=ON")
 endif()
 if(NEMO_SPEECH_HTTP_TLS AND NOT NEMO_SPEECH_BUILD_HTTP)
     message(FATAL_ERROR "NEMO_SPEECH_HTTP_TLS requires NEMO_SPEECH_BUILD_HTTP=ON")

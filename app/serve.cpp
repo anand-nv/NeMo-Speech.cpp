@@ -422,15 +422,34 @@ run_server(int argc, char** argv) {
     }
 #endif
 #if defined(NEMO_SPEECH_CLI_TTS)
+    const bool omnivoice_requested =
+        !tts_config.omnivoice_model.empty() || !tts_config.omnivoice_audio_tokenizer_model.empty();
     const bool tts_requested = tts_enabled > 0 || !tts_model.empty() ||
                                !tts_config.runtime.magpie_model.empty() || !codec_model.empty() ||
-                               !tokenizer_model.empty() || !tn_model.empty();
-    const auto magpie_path = tts_enabled == 0 ? std::string() : resolve("TTS model", [&] {
-        return optional_model(
-            tts_model.empty() ? tts_config.runtime.magpie_model : tts_model, "tts",
-            "MagpieTTS model", tts_requested);
-    });
-    if (tts_enabled != 0 && (tts_requested || !magpie_path.empty())) {
+                               !tokenizer_model.empty() || !tn_model.empty() || omnivoice_requested;
+    std::string magpie_path;
+    if (tts_enabled != 0 && omnivoice_requested) {
+        if (!tts_model.empty() || !tts_config.runtime.magpie_model.empty() ||
+            !codec_model.empty() || !tts_config.runtime.codec_model.empty() ||
+            !tokenizer_model.empty() || !tts_config.tokenizer_model_dir.empty())
+            validation_errors.push_back(
+                "TTS: Magpie and OmniVoice model options are mutually exclusive");
+        tts_config.omnivoice_model = resolve("OmniVoice model", [&] {
+            return optional_model(tts_config.omnivoice_model, "", "OmniVoice model", true);
+        });
+        tts_config.omnivoice_audio_tokenizer_model = resolve("Higgs Audio V2 tokenizer", [&] {
+            return optional_model(
+                tts_config.omnivoice_audio_tokenizer_model, "", "Higgs Audio V2 tokenizer model",
+                true);
+        });
+    } else if (tts_enabled != 0) {
+        magpie_path = resolve("TTS model", [&] {
+            return optional_model(
+                tts_model.empty() ? tts_config.runtime.magpie_model : tts_model, "tts",
+                "MagpieTTS model", tts_requested);
+        });
+    }
+    if (tts_enabled != 0 && !omnivoice_requested && (tts_requested || !magpie_path.empty())) {
         tts_config.runtime.codec_model = resolve("TTS codec model", [&] {
             return optional_model(
                 codec_model.empty() ? tts_config.runtime.codec_model : codec_model, "codec",
@@ -490,7 +509,7 @@ run_server(int argc, char** argv) {
     }
 #endif
 #if defined(NEMO_SPEECH_CLI_TTS)
-    if (!magpie_path.empty()) {
+    if (tts_enabled != 0 && (!magpie_path.empty() || !tts_config.omnivoice_model.empty())) {
         bool tts_cuda = false;
 #if defined(NEMO_SPEECH_CLI_CUDA)
         tts_cuda = device_name == "auto" || device_name == "cuda" ||
@@ -512,6 +531,9 @@ run_server(int argc, char** argv) {
         tts_config.runtime.verbose = cli_verbose();
         nemo_speech::tts::SynthesizerConfig config;
         config.runtime = tts_config.runtime;
+        config.omnivoice_model = tts_config.omnivoice_model;
+        config.omnivoice_audio_tokenizer_model = tts_config.omnivoice_audio_tokenizer_model;
+        config.omnivoice_options = tts_config.omnivoice_options;
         config.tokenizer_model_dir = tts_config.tokenizer_model_dir;
         config.text_normalizer_model_dir = tts_config.tn_model_dir;
         config.tokenizer = tts_config.tokenizer_config;
@@ -645,6 +667,10 @@ print_serve_help(const char* program) {
         "  --tts-model MODEL       Optional MagpieTTS path or indexed model\n"
         "  --codec-model MODEL     NanoCodec path or indexed model\n"
         "  --tokenizer-dir MODEL   TTS tokenizer directory or indexed model\n"
+        "  --tts.omnivoice-model MODEL\n"
+        "                          Optional OmniVoice denoiser GGUF\n"
+        "  --tts.audio-tokenizer-model MODEL\n"
+        "                          Paired Higgs Audio V2 tokenizer GGUF\n"
         "  --tn-model-dir MODEL    Optional TTS text-normalization assets\n"
         "  --tts.preempt           Cancel older HTTP TTS synthesis for the newest request\n"
 #endif

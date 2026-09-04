@@ -3,8 +3,8 @@
 // nemo-speech: stable C ABI for TTS.
 //
 // This is the installed binary contract: opaque handles, POD structs, explicit
-// ownership, no exceptions, no STL, no C++ name mangling. The C++ MagpieTTS
-// runtime sits behind these handles.
+// ownership, no exceptions, no STL, no C++ name mangling. The family-neutral
+// C++ TTS runtime sits behind these handles.
 //
 // Compatibility (v1):
 //   - Stable exported symbols: nemo_speech_tts_*; C++ exports are internal and unstable.
@@ -34,6 +34,8 @@ extern "C" {
 #endif
 
 typedef struct nemo_speech_tts_synthesizer nemo_speech_tts_synthesizer;
+typedef struct nemo_speech_tts_voice_prompt nemo_speech_tts_voice_prompt;
+typedef struct nemo_speech_tts_stream nemo_speech_tts_stream;
 
 typedef enum nemo_speech_tts_status {
     NEMO_SPEECH_TTS_OK = 0,
@@ -63,6 +65,25 @@ typedef enum nemo_speech_tts_longform_mode {
 
 // ---- Startup config (subsystem structs, referenced by optional pointer) ----
 
+typedef struct nemo_speech_tts_omnivoice_options {
+    size_t size;
+    int32_t num_steps;
+    float guidance_scale;
+    float t_shift;
+    float layer_penalty_factor;
+    float position_temperature;
+    float class_temperature;
+    bool denoise;
+    bool postprocess_output;
+    double audio_chunk_duration_s;
+    double audio_chunk_threshold_s;
+    double pad_duration_s;
+    double fade_duration_s;
+    double speed;
+    // Zero selects automatic duration; positive values override speed.
+    double duration_s;
+} nemo_speech_tts_omnivoice_options;
+
 typedef struct nemo_speech_tts_model_config {
     size_t size;
     const char* magpie_model;
@@ -71,6 +92,10 @@ typedef struct nemo_speech_tts_model_config {
     const char* tokenizer_model_dir;
     // Optional written-to-spoken TN grammar root. Empty keeps text unchanged.
     const char* text_normalizer_model_dir;
+    // Both fields select OmniVoice. They are mutually exclusive with all
+    // Magpie model/tokenizer fields above.
+    const char* omnivoice_model;
+    const char* omnivoice_audio_tokenizer_model;
 } nemo_speech_tts_model_config;
 
 typedef struct nemo_speech_tts_runtime_config {
@@ -102,6 +127,9 @@ typedef struct nemo_speech_tts_runtime_config {
     nemo_speech_tts_uma_mode uma_mode;
     nemo_speech_tts_longform_mode longform_mode;
     bool lt_fp32;
+    // Optional family-specific startup defaults. A smaller legacy struct has
+    // no pointer and retains its original behavior.
+    const nemo_speech_tts_omnivoice_options* omnivoice_options;
 } nemo_speech_tts_runtime_config;
 
 typedef struct nemo_speech_tts_synthesizer_config {
@@ -128,6 +156,9 @@ typedef struct nemo_speech_tts_synthesis_options {
     bool override_cfg_scale;
     const char* voice_name;      // ignored when speaker >= 0
     int32_t output_sample_rate;  // 0 = model rate; otherwise 8000..model rate
+    const nemo_speech_tts_omnivoice_options* omnivoice_options;
+    const nemo_speech_tts_voice_prompt* voice_prompt;
+    const char* instruction;
 } nemo_speech_tts_synthesis_options;
 
 // Raw PCM callback. `pcm` is little-endian signed 16-bit mono at the requested
@@ -179,10 +210,23 @@ typedef struct nemo_speech_tts_synthesis_stats {
     double e2e_rtfx;
 } nemo_speech_tts_synthesis_stats;
 
-// Struct defaults with `size` set to the current sizeof.
-NEMO_SPEECH_TTS_API nemo_speech_tts_runtime_config nemo_speech_tts_runtime_config_default(void);
+// Struct defaults with `size` set to the current sizeof. These returns are
+// versioned because changing the size of a struct returned by value is an ABI
+// break even when its input use remains append-only. Inline wrappers preserve
+// the source API; FFI/dlsym users must request the explicitly versioned names.
+NEMO_SPEECH_TTS_API nemo_speech_tts_runtime_config nemo_speech_tts_runtime_config_default_v2(void);
 NEMO_SPEECH_TTS_API nemo_speech_tts_synthesis_options
-nemo_speech_tts_synthesis_options_default(void);
+nemo_speech_tts_synthesis_options_default_v2(void);
+static inline nemo_speech_tts_runtime_config
+nemo_speech_tts_runtime_config_default(void) {
+    return nemo_speech_tts_runtime_config_default_v2();
+}
+static inline nemo_speech_tts_synthesis_options
+nemo_speech_tts_synthesis_options_default(void) {
+    return nemo_speech_tts_synthesis_options_default_v2();
+}
+NEMO_SPEECH_TTS_API nemo_speech_tts_omnivoice_options
+nemo_speech_tts_omnivoice_options_default(void);
 NEMO_SPEECH_TTS_API nemo_speech_tts_synthesis_stats nemo_speech_tts_synthesis_stats_default(void);
 
 // ---- Synthesizer ----
@@ -199,8 +243,8 @@ nemo_speech_tts_speaker_count(const nemo_speech_tts_synthesizer* synthesizer);
 NEMO_SPEECH_TTS_API const char* nemo_speech_tts_speaker_name(
     const nemo_speech_tts_synthesizer* synthesizer, size_t i);
 
-// Synthesize raw text through the native Magpie tokenizer. The synthesizer must
-// have been created with model.tokenizer_model_dir.
+// Synthesize raw text. Magpie requires model.tokenizer_model_dir; OmniVoice
+// uses the Qwen byte-level BPE embedded in its GGUF.
 NEMO_SPEECH_TTS_API nemo_speech_tts_status nemo_speech_tts_synthesize_text(
     nemo_speech_tts_synthesizer* synthesizer, const nemo_speech_tts_synthesis_options* options,
     const char* text, nemo_speech_tts_pcm_callback callback, void* user_data,
@@ -211,6 +255,30 @@ NEMO_SPEECH_TTS_API nemo_speech_tts_status nemo_speech_tts_synthesize_tokens(
     nemo_speech_tts_synthesizer* synthesizer, const nemo_speech_tts_synthesis_options* options,
     const int32_t* tokens, size_t token_count, nemo_speech_tts_pcm_callback callback,
     void* user_data, nemo_speech_tts_synthesis_stats* stats_out);
+
+// ---- OmniVoice prompts and bidirectional streaming ----
+
+NEMO_SPEECH_TTS_API nemo_speech_tts_status nemo_speech_tts_voice_prompt_create(
+    nemo_speech_tts_synthesizer* synthesizer, const float* interleaved_pcm, size_t frames,
+    int32_t channels, int32_t sample_rate, const char* transcript, bool preprocess,
+    nemo_speech_tts_voice_prompt** out);
+NEMO_SPEECH_TTS_API nemo_speech_tts_status nemo_speech_tts_voice_prompt_load(
+    nemo_speech_tts_synthesizer* synthesizer, const char* path, nemo_speech_tts_voice_prompt** out);
+NEMO_SPEECH_TTS_API nemo_speech_tts_status nemo_speech_tts_voice_prompt_save(
+    const nemo_speech_tts_synthesizer* synthesizer, const nemo_speech_tts_voice_prompt* prompt,
+    const char* path);
+NEMO_SPEECH_TTS_API void nemo_speech_tts_voice_prompt_destroy(nemo_speech_tts_voice_prompt* prompt);
+
+NEMO_SPEECH_TTS_API nemo_speech_tts_status nemo_speech_tts_stream_create(
+    nemo_speech_tts_synthesizer* synthesizer,
+    const nemo_speech_tts_synthesis_options* immutable_options,
+    nemo_speech_tts_pcm_callback callback, void* user_data, nemo_speech_tts_stream** out);
+NEMO_SPEECH_TTS_API nemo_speech_tts_status nemo_speech_tts_stream_push_text(
+    nemo_speech_tts_stream* stream, const char* bytes, size_t count, bool explicit_commit);
+NEMO_SPEECH_TTS_API nemo_speech_tts_status nemo_speech_tts_stream_finish(
+    nemo_speech_tts_stream* stream, nemo_speech_tts_synthesis_stats* stats_out);
+NEMO_SPEECH_TTS_API void nemo_speech_tts_stream_cancel(nemo_speech_tts_stream* stream);
+NEMO_SPEECH_TTS_API void nemo_speech_tts_stream_destroy(nemo_speech_tts_stream* stream);
 
 // ---- Misc ----
 

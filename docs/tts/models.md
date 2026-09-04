@@ -1,7 +1,8 @@
 # TTS models
 
-The TTS pipeline loads two GGUFs: a **MagpieTTS** token generator and a **NeMo
-NanoCodec** decoder. The CLI downloads the complete default stack, including
+The default TTS pipeline loads two GGUFs: a **MagpieTTS** token generator and a **NeMo
+NanoCodec** decoder. An opt-in native [OmniVoice](omnivoice.md) pipeline loads
+its denoiser and Higgs Audio V2 tokenizer GGUFs instead. The CLI downloads the complete default Magpie stack, including
 Magpie's tokenizer assets, with one command:
 
 ```bash
@@ -115,6 +116,10 @@ python3 convert_model.py custom-magpie.nemo --outfile custom-magpie.f16.gguf
 
 Conversion does not require `nemo_toolkit`. The optional
 `scripts/tts/tokenize-magpietts.py` debugging helper does.
+
+OmniVoice uses a separately pinned, license-aware two-file conversion. See
+[OmniVoice](omnivoice.md) for exact downloads, hashes, conversion commands,
+CPU/CUDA execution, voice prompts, streaming, and the multilingual release gate.
 
 Once converted, point the server at them; see
 [TTS configuration](configuration.md).

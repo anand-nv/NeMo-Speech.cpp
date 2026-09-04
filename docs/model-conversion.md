@@ -32,6 +32,7 @@ commit.
 | PnC | `q8_0` | local NeMo checkpoint |
 | VAD | `f32` | `silero` |
 | TTS | `f16` | `nvidia/magpie_tts_multilingual_357m` |
+| OmniVoice | `f16` | `k2-fsa/OmniVoice` (pinned revision; two GGUF outputs) |
 | codec | `f16` | `nvidia/nemo-nano-codec-22khz-1.89kbps-21.5fps` |
 | NMT | `f16` | `nvidia/Riva-Translate-4B-Instruct-v2` |
 
@@ -70,4 +71,5 @@ See the model-family guides for runtime assets and model-specific behavior:
 
 - [ASR, VAD, diarization, and PnC](asr/models.md)
 - [TTS and NanoCodec](tts/models.md)
+- [OmniVoice conversion and runtime](tts/omnivoice.md)
 - [NMT](nmt/models.md)

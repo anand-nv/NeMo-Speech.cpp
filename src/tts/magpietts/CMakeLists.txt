@@ -12,6 +12,7 @@ add_library(nemo_speech_tts SHARED
     ${MAGPIETTS_MODEL_SOURCES}
     config.cpp
     ../c_api.cpp
+    ../c_legacy_abi.cpp
     ../synthesizer.cpp
     magpietts.cpp
     runtime.cpp

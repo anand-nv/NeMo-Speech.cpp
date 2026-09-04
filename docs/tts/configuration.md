@@ -1,6 +1,6 @@
 # TTS configuration
 
-Configuration for MagpieTTS + NanoCodec. `nemo-speech serve` hosts HTTP; the
+Configuration for MagpieTTS + NanoCodec and opt-in native OmniVoice. `nemo-speech serve` hosts HTTP; the
 separate `riva_server` hosts Riva-compatible gRPC.
 Either process can load ASR, TTS, and NMT together. For how keys are set (YAML,
 environment, and CLI precedence), see
@@ -61,7 +61,10 @@ voice names in `voices_by_language`. The legacy `voice_name`, `subvoices`, and
 themselves.
 
 TTS auto-enables when `tts.magpie-model`, `tts.codec-model`, and
-`tts.tokenizer-model-dir` are all set; force with `tts.enabled`.
+`tts.tokenizer-model-dir` are all set, or when both `tts.omnivoice-model` and
+`tts.audio-tokenizer-model` are set; force with `tts.enabled`. The two model
+families are mutually exclusive. See the [OmniVoice guide](omnivoice.md) for
+conversion, cloning, and streaming examples.
 
 ## Voices
 
@@ -144,6 +147,8 @@ All keys nest under `tts.`. Defaults shown; CLI alias listed where one exists.
 | `tts.magpie-model` | - | - | MagpieTTS GGUF token generator (required) |
 | `tts.codec-model` | - | - | NanoCodec decoder GGUF (required) |
 | `tts.tokenizer-model-dir` | - | - | extracted Magpie `.nemo` dir (required) |
+| `tts.omnivoice-model` | - | - | OmniVoice denoiser GGUF (paired with audio tokenizer) |
+| `tts.audio-tokenizer-model` | - | - | Higgs Audio V2 tokenizer GGUF (paired with OmniVoice) |
 | `tts.tokenizer.sentence-limit.<lang>` | - | per language (`en` 45 ... `ja` 40) | sentence-chunking threshold in words (characters for `zh`/`ja`); subkeys `en`, `es`, `fr`, `vi`, `it`, `de`, `zh`, `hi`, `ja`, `ar`, `ko`, `pt` |
 | `tts.tn-model-dir` | - | - | enables Sparrowhawk TN with this grammar dir; requires `NEMO_SPEECH_WITH_NORM=ON` |
 | `tts.language-code` | - | `en-US` | default text language code |
@@ -162,6 +167,25 @@ All keys nest under `tts.`. Defaults shown; CLI alias listed where one exists.
 | `tts.use-cfg` / `tts.no-cfg` | - | on | enable / disable CFG |
 | `tts.use-local-transformer` / `tts.no-local-transformer` | - | on | local transformer |
 | `tts.use-kv-cache` / `tts.no-kv-cache` | - | on | decoder KV cache |
+
+### OmniVoice generation
+
+| key | default | meaning |
+|---|---|---|
+| `tts.omnivoice-steps` | `32` | iterative denoising steps |
+| `tts.omnivoice-guidance` | `2.0` | classifier-free guidance scale |
+| `tts.omnivoice-time-shift` | `0.1` | reveal-schedule shift |
+| `tts.omnivoice-layer-penalty` | `5.0` | earlier-codebook confidence penalty |
+| `tts.omnivoice-position-temperature` | `5.0` | reveal-position Gumbel temperature |
+| `tts.omnivoice-class-temperature` | `0.0` | token-class temperature; zero is greedy |
+| `tts.omnivoice-speed` | `1.0` | speaking-speed multiplier |
+| `tts.omnivoice-duration` | `0.0` | fixed seconds; positive values override speed |
+| `tts.omnivoice-denoise` | `true` | add the prompt denoise control token |
+| `tts.omnivoice-postprocess` | `true` | silence/level/fade/padding post-processing |
+| `tts.omnivoice-chunk-duration` | `15.0` | target seconds per long-form chunk |
+| `tts.omnivoice-chunk-threshold` | `30.0` | estimated seconds above which chunking begins |
+| `tts.omnivoice-pad-duration` | `0.1` | leading/trailing silence in seconds |
+| `tts.omnivoice-fade-duration` | `0.1` | leading/trailing fade in seconds |
 
 ### Codec streaming
 

@@ -198,6 +198,12 @@ to a file.
 nemo-speech synthesize "Hello" --output hello.wav
 ```
 
+Opt-in OmniVoice builds accept `--omnivoice-model` and
+`--audio-tokenizer-model`, plus automatic voice, `--instruction` voice design,
+and `--prompt-wav`/`--prompt-text` or `--prompt-file` voice cloning. See the
+[OmniVoice guide](tts/omnivoice.md) for pinned conversion, CPU/CUDA, prompt
+security, and streaming examples.
+
 ## Select a backend
 
 Backend selection is automatic. Override it with `--device` or its `--backend`

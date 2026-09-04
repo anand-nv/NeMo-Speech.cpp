@@ -15,6 +15,9 @@ target_link_libraries(nemo_speech_grpc_tts PUBLIC
     nemo_speech_tts_tokenizer
     riva_proto
 )
+if(NEMO_SPEECH_TTS_WITH_OMNIVOICE)
+    target_compile_definitions(nemo_speech_grpc_tts PRIVATE NEMO_SPEECH_TTS_WITH_OMNIVOICE=1)
+endif()
 
 if(NEMO_SPEECH_BUILD_NMT)
     add_library(nemo_speech_grpc_nmt STATIC grpc_nmt.cc)
