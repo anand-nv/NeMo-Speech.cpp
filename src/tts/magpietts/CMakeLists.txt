@@ -15,7 +15,11 @@ add_library(nemo_speech_tts SHARED
     ../synthesizer.cpp
     magpietts.cpp
     runtime.cpp
+    batch/batch_backend.cpp
     batch/batch_decoder.cpp
+    batch/batch_engine.cpp
+    batch/batch_lt.cpp
+    batch/batch_scheduler.cpp
     batch/slot_pool.cpp
 )
 
@@ -85,7 +89,7 @@ if(GGML_CUDA AND NEMO_SPEECH_GGML_PATCHED)
     if(CUDAToolkit_FOUND)
         enable_language(CUDA)
         foreach(target ${MAGPIETTS_TARGETS})
-            target_sources(${target} PRIVATE magpietts_cuda_sampling.cu magpietts_lt_fused.cu magpietts_decoder_fused.cu)
+            target_sources(${target} PRIVATE magpietts_cuda_sampling.cu magpietts_lt_fused.cu magpietts_decoder_fused.cu magpietts_batch_fused.cu)
             target_compile_definitions(${target} PRIVATE MAGPIETTS_CUDA_SAMPLING)
             target_link_libraries(${target} PRIVATE CUDA::cudart CUDA::cuda_driver)
             set_target_properties(${target} PROPERTIES

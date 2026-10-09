@@ -23,6 +23,7 @@
 #include <utility>
 
 #include "audio_pp.h"
+#include "batch/batch_request.h"
 #include "decoder.h"
 #include "encoder.h"
 #include "ggml-alloc.h"
@@ -166,6 +167,7 @@ class MagpieStreamingWorkspace {
             local_transformer_fp32_cuda_sampler->setThreads(threads);
         }
         request.beginRequest();
+        codec.state.clear();
 
 #if defined(MAGPIETTS_CUDA_SAMPLING)
         if (use_cuda_sampling && (!cuda_sampler || cuda_sampler_codebooks != audio_codebooks)) {
@@ -261,7 +263,7 @@ class MagpieStreamingWorkspace {
     MagpieDecoder decoder;
     LocalCodebookSampler local_sampler;
     nc::NanoCodecDecoder codec_decoder;
-    std::map<int, nc::NanoCodecStreamGraph> codec_stream_graphs;
+    MagpieCodecContext codec;
 
     // Buffers of the request being synthesized (one request at a time).
     MagpieRequestBuffers request;
@@ -271,6 +273,8 @@ class MagpieStreamingWorkspace {
     // while the current chunk is being generated (see MagpieChunkPrefetch).
     ggml_backend_t prefetch_backend = nullptr;
     ggml_gallocr_t prefetch_encoder_allocr = nullptr;
+    // Batching engine: the text encoder's graph allocator, kept across requests.
+    ggml_gallocr_t engine_encoder_allocr = nullptr;
     ggml_gallocr_t prefetch_prefill_allocr = nullptr;
     ggml_gallocr_t prefetch_cross_allocr = nullptr;
 
@@ -294,6 +298,9 @@ class MagpieStreamingWorkspace {
     }
 
     ~MagpieStreamingWorkspace() {
+        if (engine_encoder_allocr) {
+            ggml_gallocr_free(engine_encoder_allocr);
+        }
         if (prefetch_encoder_allocr) {
             ggml_gallocr_free(prefetch_encoder_allocr);
         }
@@ -686,7 +693,8 @@ decode_and_stream_chunk(
     nc::NanoCodecStreamState* stream_state, nc::NanoCodecStreamGraph* stream_graph,
     const std::vector<std::vector<int32_t>>& chunk, int threads, stream_audio_outputs& outputs,
     AudioPostProcessor& audio_pp, stream_run_metrics* metrics, const char* run_label,
-    int chunk_index, int history_frames, bool final_chunk, bool verbose) {
+    int chunk_index, int history_frames, bool final_chunk, bool verbose,
+    std::mutex* decode_mutex = nullptr) {
     const ggml_nvtx::range nvtx_range("magpietts_stream_decode_and_write_chunk");
     if (chunk.empty()) {
         return true;
@@ -703,6 +711,11 @@ decode_and_stream_chunk(
         metrics->codec.begin(t_start);
     }
     bool decoded = false;
+    // Requests of the batching engine share the codec backend: one decode at a time.
+    std::unique_lock<std::mutex> decode_lock;
+    if (decode_mutex) {
+        decode_lock = std::unique_lock<std::mutex>(*decode_mutex);
+    }
     if (stream_state) {
         if (!stream_graph) {
             fprintf(stderr, "stateful codec stream requested without a persistent graph\n");
@@ -717,6 +730,9 @@ decode_and_stream_chunk(
         decoded = decoder.decodeStream(*stream_state, *stream_graph, codec_frames, threads, audio);
     } else {
         decoded = decoder.decode(codec_frames, threads, audio);
+    }
+    if (decode_lock.owns_lock()) {
+        decode_lock.unlock();
     }
     if (!decoded) {
         return false;
@@ -793,6 +809,7 @@ struct codec_stream_worker {
     bool true_stateful = true;
     bool verbose = false;
     size_t max_buffered_frames = 16;
+    std::mutex* decode_mutex = nullptr;  // shared codec backend (batching engine)
 
     std::vector<std::vector<int32_t>> audio_codes;
     std::mutex mutex;
@@ -1070,7 +1087,8 @@ struct codec_stream_worker {
                 if (!decode_and_stream_chunk(
                         codec, decoder, true_stateful ? &stream_state : nullptr, stream_graph,
                         item.frames, threads, outputs, audio_pp, metrics, run_label,
-                        item.chunk_index, item.history_frames, item.final_read, verbose)) {
+                        item.chunk_index, item.history_frames, item.final_read, verbose,
+                        decode_mutex)) {
                     set_failed("decode or audio output failed");
                     return;
                 }
@@ -1119,14 +1137,29 @@ struct codec_stream_worker {
 // frames stream to the NanoCodec worker as they are produced.
 class MagpieRequestRunner {
    public:
+    using StepStatus = IMagpieBatchRequest::Status;
+
     MagpieRequestRunner(
         magpietts_model& magpie, const nc::NanoCodecModel& codec,
         MagpieStreamingWorkspace& workspace, magpie_stream_params& params,
         stream_audio_outputs& outputs, stream_run_metrics& metrics, const char* run_label,
         bool write_codes)
         : magpie_(magpie), codec_(codec), workspace_(workspace), buffers_(workspace.request),
-          params_(params), outputs_(outputs), metrics_(metrics),
+          codec_ctx_(workspace.codec), params_(params), outputs_(outputs), metrics_(metrics),
           label_(run_label ? run_label : "stream"), write_codes_(write_codes) {}
+
+    // In-flight batching: the request owns its buffers and codec context; the workspace only
+    // lends the text encoder and the codec decoder.
+    MagpieRequestRunner(
+        magpietts_model& magpie, const nc::NanoCodecModel& codec,
+        MagpieStreamingWorkspace& workspace, MagpieRequestBuffers& buffers,
+        MagpieCodecContext& codec_ctx, std::mutex* codec_mutex, magpie_stream_params& params,
+        stream_audio_outputs& outputs, stream_run_metrics& metrics, const char* run_label,
+        bool write_codes)
+        : magpie_(magpie), codec_(codec), workspace_(workspace), buffers_(buffers),
+          codec_ctx_(codec_ctx), codec_mutex_(codec_mutex), params_(params), outputs_(outputs),
+          metrics_(metrics), label_(run_label ? run_label : "stream"), write_codes_(write_codes),
+          engine_mode_(true) {}
 
     ~MagpieRequestRunner() {
         // Every failure path after start() already cancelled or joined the codec worker; this only
@@ -1175,8 +1208,170 @@ class MagpieRequestRunner {
         return finish();
     }
 
+    // ---- In-flight batching (see batch_scheduler.h): the scheduler drives the same phases as
+    // run(), with each decoder step (and a chunk's prefill) batched across requests. ----
+
+    // Resolve the request and check it fits the engine. Errors go to `error`.
+    bool engineResolve(
+        const std::vector<std::vector<int32_t>>& input_token_chunks,
+        const MagpieBatchRequestLimits& limits, std::string* error) {
+        auto fail = [&](const std::string& message) {
+            if (error) {
+                *error = message;
+            }
+            return false;
+        };
+        if (!resolve(input_token_chunks)) {
+            return fail("invalid MagpieTTS request");
+        }
+        limits_ = limits;
+        const magpietts_hparams& h = state_.h;
+        if (params_.use_cfg != limits.use_cfg) {
+            return fail(limits.use_cfg ? "the batching engine runs CFG; the request disables it"
+                                       : "the batching engine runs without CFG; the request uses it");
+        }
+        if (!params_.use_local_transformer) {
+            return fail("the batching engine needs the local transformer");
+        }
+        const int positions =
+            (h.max_decoder_steps + h.frame_stacking_factor - 1) / h.frame_stacking_factor;
+        if (positions > limits.max_decoder_positions) {
+            return fail(
+                "requested decoder steps exceed the batching engine budget (" +
+                std::to_string(limits.max_decoder_positions * h.frame_stacking_factor) + ")");
+        }
+        // Widest text window over the chunks (history of up to 20 tokens, as beginTextChunk).
+        int max_window = 0;
+        size_t seen = 0;
+        for (const auto& chunk : state_.token_chunks) {
+            const int cur = (int)chunk.size();
+            const int hist = std::min<int>(
+                {(int)std::min<size_t>(seen, (size_t)1 << 30), cur, 20, std::max(0, h.n_ctx - cur)});
+            max_window = std::max(max_window, hist + cur);
+            seen += chunk.size();
+        }
+        if (max_window > limits.text_capacity) {
+            return fail(
+                "text window of " + std::to_string(max_window) +
+                " tokens exceeds the batching engine capacity of " +
+                std::to_string(limits.text_capacity));
+        }
+        // Latency (TTFA, end to end) counts from submission, queueing included.
+        metrics_.begin();
+        outputs_.metrics = &metrics_;
+        // The encoder output stays on the device when the model runs on CUDA.
+        state_.use_cuda_sampling = magpietts_backend_is_cuda(magpie_.backend);
+        state_.first_audio_pending = false;
+        state_.prefetch_enabled = false;
+        return true;
+    }
+
+    // Admission: start the codec worker and the request's clocks.
+    bool engineStart() {
+        magpie_stream_params& params = params_;
+        if (!code_writer_.open(write_codes_ ? params.codes_out : std::string())) {
+            return false;
+        }
+        codec_worker_ = std::make_unique<codec_stream_worker>(
+            codec_, workspace_.codec_decoder, codec_ctx_.state, codec_ctx_.graphs,
+            params.codec_threads, outputs_, codec_.samplesPerFrame(), params.chunk_frames,
+            params.codec_history_frames, params.codec_future_frames, state_.window_samples,
+            (size_t)params.codec_queue_depth, params.use_stateful_codec, &metrics_, label_,
+            params.verbose);
+        codec_worker_->decode_mutex = codec_mutex_;
+        codec_worker_->start();
+        t_start_ = ggml_time_us();
+        metrics_.decoder.begin(t_start_);
+        return true;
+    }
+
+    // The next text chunk's window and encoder pass (its prefill runs as the chunk's first step).
+    bool engineBeginChunk(size_t chunk_index) {
+        if (!beginTextChunk(chunk_index)) {
+            return false;
+        }
+        if (state_.chunk.text_len > limits_.text_capacity) {
+            fprintf(
+                stderr, "%s text window %d exceeds the batching capacity %d\n", label_,
+                state_.chunk.text_len, limits_.text_capacity);
+            return cancelWorker();
+        }
+        state_.chunk.step = 0;
+        return true;
+    }
+
+    StepStatus enginePrepare(MagpieBatchRowInput& row) {
+        const magpietts_hparams& h = state_.h;
+        MagpieTextChunkState& chunk = state_.chunk;
+        if (chunk.step >= chunk.max_decoder_positions) {
+            return StepStatus::EndChunk;
+        }
+        pending_ = MagpieStepOutput{};
+        const StepStatus status = beginStep(pending_);
+        if (status != StepStatus::Continue) {
+            return status;
+        }
+        const int step = chunk.step;
+        if (step > 0) {
+            // stacked codes of the previous frame (the decoder input of this step)
+            row.tokens.assign((size_t)h.stacked_audio_codebooks(), 0);
+            const size_t raw_len = chunk.audio_codes[0].size();
+            const size_t frame_start = raw_len - (size_t)h.frame_stacking_factor;
+            for (int lane = 0; lane < h.frame_stacking_factor; ++lane) {
+                for (int c = 0; c < h.audio_codebooks; ++c) {
+                    row.tokens[(size_t)(c + lane * h.audio_codebooks)] =
+                        chunk.audio_codes[(size_t)c][frame_start + (size_t)lane];
+                }
+            }
+        }
+        row.text_len = chunk.text_len;
+        row.prior = state_.attention_prior.priorForStep(h, chunk.text_len);
+        row.collect_alignment = state_.attention_prior.shouldCollect(h, step, chunk.text_len);
+        pending_.alignment_collected = row.collect_alignment;
+        row.temperature = h.temperature;
+        row.cfg_scale = h.cfg_scale;
+        row.top_k = h.top_k;
+        row.forbid_eos = pending_.forbid_eos;
+        row.seed = (uint64_t)(uint32_t)params_.seed;
+        row.frame_index = state_.decoder_frames_generated;
+        row.rng = &state_.rng;
+        if (step == 0) {
+            row.text_cond = &buffers_.text_cond;
+            row.text_cond_device =
+                buffers_.text_cond_device.tensor ? &buffers_.text_cond_device : nullptr;
+            row.speaker = params_.speaker;
+        }
+        return StepStatus::Continue;
+    }
+
+    StepStatus engineApply(const MagpieBatchRowOutput& out) {
+        const magpietts_hparams& h = state_.h;
+        if ((int)out.codes.size() != h.stacked_audio_codebooks() ||
+            (int)out.argmax.size() != h.stacked_audio_codebooks()) {
+            fprintf(stderr, "%s batch step returned an unexpected number of codebooks\n", label_);
+            cancelWorker();
+            return StepStatus::Failed;
+        }
+        pending_.next_codes = out.codes;
+        pending_.argmax_codes = out.argmax;
+        pending_.alignment_scores = out.alignment;
+        const StepStatus status = applyStep(pending_);
+        if (status == StepStatus::Continue) {
+            ++state_.chunk.step;
+        }
+        return status;
+    }
+
+    bool engineEndChunk() { return endTextChunk(); }
+    bool engineFinish() { return finish(); }
+    void engineAbort() {
+        if (codec_worker_) {
+            codec_worker_->cancel();
+        }
+    }
+    const MagpieRequestState& state() const { return state_; }
+
    private:
-    enum class StepStatus { Continue, EndChunk, Failed };
 
     bool cancelWorker() {
         codec_worker_->cancel();
@@ -1322,8 +1517,8 @@ class MagpieRequestRunner {
         }
 
         codec_worker_ = std::make_unique<codec_stream_worker>(
-            codec_, workspace_.codec_decoder, buffers_.codec_stream_state,
-            workspace_.codec_stream_graphs, params.codec_threads, outputs_,
+            codec_, workspace_.codec_decoder, codec_ctx_.state, codec_ctx_.graphs,
+            params.codec_threads, outputs_,
             codec_.samplesPerFrame(), params.chunk_frames, params.codec_history_frames,
             params.codec_future_frames, state_.window_samples, (size_t)params.codec_queue_depth,
             params.use_stateful_codec, &metrics_, label_, params.verbose);
@@ -1583,7 +1778,9 @@ class MagpieRequestRunner {
                 return cancelWorker();
             }
         } else if (state_.use_cuda_sampling) {
-            if (!workspace_.encoder.evalDevice(text_window, params.threads, text_cond_device)) {
+            if (!workspace_.encoder.evalDevice(
+                    text_window, params.threads, text_cond_device, nullptr,
+                    engine_mode_ ? &workspace_.engine_encoder_allocr : nullptr)) {
                 return cancelWorker();
             }
             if (state_.longform_active) {
@@ -1639,6 +1836,20 @@ class MagpieRequestRunner {
     // application of its output to the request.
     StepStatus step() {
         const ggml_nvtx::range nvtx_step("magpietts_stream_generation_step");
+        MagpieStepOutput out;
+        const StepStatus status = beginStep(out);
+        if (status != StepStatus::Continue) {
+            return status;
+        }
+        if (!decodeStep(out)) {
+            return StepStatus::Failed;
+        }
+        return applyStep(out);
+    }
+
+    // Bookkeeping before a decoder step: the chunk prefetch launch, the frame budget, the codec
+    // worker's health and whether EOS may be sampled yet.
+    StepStatus beginStep(MagpieStepOutput& out) {
         const magpietts_hparams& h = state_.h;
         MagpieTextChunkState& chunk = state_.chunk;
         const int step = chunk.step;
@@ -1647,7 +1858,6 @@ class MagpieRequestRunner {
             // steps, so keep it off the very first ones.
             startChunkPrefetch(chunk.index + 1, *chunk.tokens);
         }
-        MagpieStepOutput out;
         out.frames_remaining = h.max_decoder_steps - step * h.frame_stacking_factor;
         if (out.frames_remaining <= 0) {
             return StepStatus::EndChunk;
@@ -1662,10 +1872,7 @@ class MagpieRequestRunner {
                 chunk.max_decoder_positions, chunk.index + 1, state_.token_chunks.size());
         }
         out.forbid_eos = step * h.frame_stacking_factor < h.min_generated_frames;
-        if (!decodeStep(out)) {
-            return StepStatus::Failed;
-        }
-        return applyStep(out);
+        return StepStatus::Continue;
     }
 
     // Run the decoder (the baked-context prefill on a chunk's first step) and sample the next
@@ -2141,11 +2348,16 @@ class MagpieRequestRunner {
     const nc::NanoCodecModel& codec_;
     MagpieStreamingWorkspace& workspace_;
     MagpieRequestBuffers& buffers_;
+    MagpieCodecContext& codec_ctx_;
+    std::mutex* codec_mutex_ = nullptr;
     magpie_stream_params& params_;
     stream_audio_outputs& outputs_;
     stream_run_metrics& metrics_;
     const char* label_;
     bool write_codes_;
+    bool engine_mode_ = false;
+    MagpieBatchRequestLimits limits_;
+    MagpieStepOutput pending_;  // engine mode: the step being decoded by the batch
     const char* logit_dump_path_ = nullptr;
     int64_t t_start_ = 0;
 
@@ -2164,6 +2376,103 @@ stream_magpie_to_audio(
     MagpieRequestRunner runner(
         magpie, codec, workspace, params, outputs, metrics, run_label, write_codes);
     return runner.run(input_token_chunks);
+}
+
+
+// IMagpieBatchRequest over MagpieRequestRunner: the per-request logic of the serial runtime,
+// with its decoder steps batched by MagpieBatchScheduler.
+class MagpieBatchRequestAdapter final : public IMagpieBatchRequest {
+   public:
+    MagpieBatchRequestAdapter(
+        magpietts_model& magpie, const nc::NanoCodecModel& codec,
+        MagpieStreamingWorkspace& workspace, std::mutex* codec_mutex,
+        const magpie_stream_params& params, const magpie_pcm_callback& pcm_callback,
+        stream_run_metrics* metrics, const std::string& run_label, bool write_codes)
+        : params_(params), label_(run_label), metrics_(metrics ? metrics : &own_metrics_) {
+        outputs_.sample_rate = codec.sampleRate();
+        outputs_.pcm_callback = pcm_callback;
+        runner_ = std::make_unique<MagpieRequestRunner>(
+            magpie, codec, workspace, buffers_, codec_ctx_, codec_mutex, params_, outputs_,
+            *metrics_, label_.c_str(), write_codes);
+    }
+
+    bool resolve(
+        const std::vector<std::vector<int32_t>>& token_chunks,
+        const MagpieBatchRequestLimits& limits, std::string* error) {
+        return runner_->engineResolve(token_chunks, limits, error);
+    }
+
+    bool start() override { return runner_->engineStart(); }
+
+    bool beginTextChunk() override {
+        const auto& chunks = runner_->state().token_chunks;
+        while (next_chunk_ < chunks.size() && chunks[next_chunk_].empty()) {
+            ++next_chunk_;
+        }
+        if (next_chunk_ >= chunks.size()) {
+            return false;
+        }
+        return runner_->engineBeginChunk(next_chunk_++);
+    }
+
+    Status prepareStep(MagpieBatchRowInput& row) override { return runner_->enginePrepare(row); }
+    Status applyStep(const MagpieBatchRowOutput& out) override { return runner_->engineApply(out); }
+
+    bool endTextChunk(bool& more) override {
+        if (!runner_->engineEndChunk()) {
+            return false;
+        }
+        const auto& chunks = runner_->state().token_chunks;
+        more = false;
+        for (size_t i = next_chunk_; i < chunks.size(); ++i) {
+            more = more || !chunks[i].empty();
+        }
+        return true;
+    }
+
+    bool finish() override { return runner_->engineFinish(); }
+    void abort() override { runner_->engineAbort(); }
+
+   private:
+    magpie_stream_params params_;
+    std::string label_;
+    stream_run_metrics own_metrics_;
+    stream_run_metrics* metrics_;
+    stream_audio_outputs outputs_;
+    MagpieRequestBuffers buffers_;
+    MagpieCodecContext codec_ctx_;
+    std::unique_ptr<MagpieRequestRunner> runner_;
+    size_t next_chunk_ = 0;
+};
+
+struct MagpieBatchRequestFactory::Impl {
+    Impl(magpietts_model& magpie_, const nc::NanoCodecModel& codec_)
+        : magpie(magpie_), codec(codec_), workspace(magpie_, codec_) {}
+    magpietts_model& magpie;
+    const nc::NanoCodecModel& codec;
+    MagpieStreamingWorkspace workspace;  // lends the text encoder and the codec decoder
+    std::mutex codec_mutex;
+};
+
+MagpieBatchRequestFactory::MagpieBatchRequestFactory(
+    magpietts_model& magpie, const nc::NanoCodecModel& codec)
+    : impl_(std::make_unique<Impl>(magpie, codec)) {}
+
+MagpieBatchRequestFactory::~MagpieBatchRequestFactory() = default;
+
+std::shared_ptr<IMagpieBatchRequest>
+MagpieBatchRequestFactory::create(
+    const magpie_stream_params& params, const std::vector<std::vector<int32_t>>& token_chunks,
+    const magpie_pcm_callback& pcm_callback, stream_run_metrics* metrics,
+    const std::string& run_label, bool write_codes, const MagpieBatchRequestLimits& limits,
+    std::string* error) {
+    auto request = std::make_shared<MagpieBatchRequestAdapter>(
+        impl_->magpie, impl_->codec, impl_->workspace, &impl_->codec_mutex, params, pcm_callback,
+        metrics, run_label, write_codes);
+    if (!request->resolve(token_chunks, limits, error)) {
+        return nullptr;
+    }
+    return request;
 }
 
 bool

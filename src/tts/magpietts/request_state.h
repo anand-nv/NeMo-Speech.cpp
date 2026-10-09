@@ -9,6 +9,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <map>
 #include <random>
 #include <thread>
 #include <vector>
@@ -30,7 +31,6 @@ struct MagpieRequestBuffers {
     DecoderKvCache cond_kv;
     DecoderKvCache uncond_kv;
     DecoderCrossKvCache cond_cross_kv;
-    nanocodec::NanoCodecStreamState codec_stream_state;
 
     // Longform chunk prefetch targets: the next text chunk's encoder output, cross K/V and
     // baked-context prefill, built on the workspace's side backend.
@@ -42,13 +42,18 @@ struct MagpieRequestBuffers {
     magpietts_backend_tensor prefetch_uncond_hidden;
     MagpiePinnedHostScratch prefetch_staging;
 
-    // Drop the previous request's decoder and codec state (allocations are kept).
+    // Drop the previous request's decoder state (allocations are kept).
     void beginRequest() {
         cond_kv.clear();
         uncond_kv.clear();
         cond_cross_kv.clear();
-        codec_stream_state.clear();
     }
+};
+
+// NanoCodec streaming state of a request and the decode graphs bound to it (one per chunk size).
+struct MagpieCodecContext {
+    nanocodec::NanoCodecStreamState state;
+    std::map<int, nanocodec::NanoCodecStreamGraph> graphs;
 };
 
 // Longform chunk prefetch: while chunk k is being generated, a helper thread runs chunk k+1's

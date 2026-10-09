@@ -118,6 +118,13 @@ main(int argc, char** argv) {
         return 1;
     }
     g_backend = model.backend;
+    // With Q8_0 projections on CUDA the serial decoder runs the fused kernel, which quantizes
+    // activations to int8 (the batched ggml graph does not): compare at that precision.
+    if (tts::magpietts_backend_is_cuda(model.backend) && !model.decoder.layers.empty() &&
+        model.decoder.layers[0].self_qkv->type == GGML_TYPE_Q8_0 && tol < 3.0e-2f) {
+        tol = 3.0e-2f;
+        std::printf("serial reference uses the int8-activation fused kernel: tolerance %.3g\n", tol);
+    }
     const tts::magpietts_hparams& h = model.hparams;
     const int threads = 8;
     const int E = h.n_embd;

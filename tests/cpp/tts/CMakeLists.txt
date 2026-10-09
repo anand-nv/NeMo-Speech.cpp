@@ -38,11 +38,33 @@ endif()
 add_executable(test_magpietts_slot_pool test_magpietts_slot_pool.cpp)
 target_link_libraries(test_magpietts_slot_pool PRIVATE nemo_speech_tts_magpietts)
 add_test(NAME magpietts_slot_pool COMMAND test_magpietts_slot_pool)
+add_executable(test_magpietts_batch_scheduler test_magpietts_batch_scheduler.cpp)
+target_link_libraries(test_magpietts_batch_scheduler PRIVATE nemo_speech_tts_magpietts Threads::Threads)
+add_test(NAME magpietts_batch_scheduler COMMAND test_magpietts_batch_scheduler)
+set_tests_properties(magpietts_batch_scheduler PROPERTIES TIMEOUT 120)
 if(NEMO_SPEECH_GGML_PATCHED)
     add_executable(test_magpietts_batch_decoder test_magpietts_batch_decoder.cpp)
     target_link_libraries(test_magpietts_batch_decoder PRIVATE nemo_speech_tts_magpietts)
     add_test(NAME magpietts_batch_decoder COMMAND test_magpietts_batch_decoder)
     set_tests_properties(magpietts_batch_decoder PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600)
+    # End to end: concurrent requests, slot reuse, cancellation (needs the model, codec and
+    # tokenizer: NEMO_SPEECH_TEST_TTS_MODEL / _CODEC_MODEL / _TOKENIZER_DIR).
+    add_executable(test_magpietts_batch_engine test_magpietts_batch_engine.cpp)
+    target_link_libraries(test_magpietts_batch_engine PRIVATE nemo_speech_tts_magpietts Threads::Threads)
+    add_test(NAME magpietts_batch_engine COMMAND test_magpietts_batch_engine --check --slots 4)
+    set_tests_properties(magpietts_batch_engine PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 900)
+    # Batch invariance of the fused CUDA step (Q8_0 model; skipped otherwise).
+    add_executable(test_magpietts_batch_fused test_magpietts_batch_fused.cpp)
+    target_link_libraries(test_magpietts_batch_fused PRIVATE nemo_speech_tts_magpietts)
+    add_test(NAME magpietts_batch_fused COMMAND test_magpietts_batch_fused --rows 1,3,8 --steps 16)
+    set_tests_properties(magpietts_batch_fused PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600)
+    add_executable(test_magpietts_batch_longform test_magpietts_batch_longform.cpp)
+    target_link_libraries(test_magpietts_batch_longform PRIVATE nemo_speech_tts_magpietts)
+    add_test(NAME magpietts_batch_longform COMMAND test_magpietts_batch_longform)
+    set_tests_properties(magpietts_batch_longform PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 900)
+    add_test(NAME magpietts_batch_engine_stress
+             COMMAND test_magpietts_batch_engine --slots 6 --stress 150 --max-steps 120)
+    set_tests_properties(magpietts_batch_engine_stress PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 1200)
 endif()
 
 # The fused attention op over a multi-slot K/V arena (in-flight batching layout): CPU forward vs a
