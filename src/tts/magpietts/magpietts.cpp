@@ -3,6 +3,7 @@
 #include "magpietts.h"
 
 #include <algorithm>
+#include <atomic>
 #include <array>
 #include <condition_variable>
 #include <cstddef>
@@ -695,7 +696,7 @@ decode_and_stream_chunk(
     const std::vector<std::vector<int32_t>>& chunk, int threads, stream_audio_outputs& outputs,
     AudioPostProcessor& audio_pp, stream_run_metrics* metrics, const char* run_label,
     int chunk_index, int history_frames, bool final_chunk, bool verbose,
-    std::mutex* decode_mutex = nullptr) {
+    std::mutex* decode_mutex = nullptr, ggml_backend_t decode_backend = nullptr) {
     const ggml_nvtx::range nvtx_range("magpietts_stream_decode_and_write_chunk");
     if (chunk.empty()) {
         return true;
@@ -728,7 +729,8 @@ decode_and_stream_chunk(
                 return false;
             }
         }
-        decoded = decoder.decodeStream(*stream_state, *stream_graph, codec_frames, threads, audio);
+        decoded = decoder.decodeStream(
+            *stream_state, *stream_graph, codec_frames, threads, audio, decode_backend);
     } else {
         decoded = decoder.decode(codec_frames, threads, audio);
     }
@@ -810,7 +812,10 @@ struct codec_stream_worker {
     bool true_stateful = true;
     bool verbose = false;
     size_t max_buffered_frames = 16;
-    std::mutex* decode_mutex = nullptr;  // shared codec backend (batching engine)
+    // Batching engine: the codec backend this request decodes on and the lock of the requests
+    // sharing it.
+    std::mutex* decode_mutex = nullptr;
+    ggml_backend_t decode_backend = nullptr;
 
     std::vector<std::vector<int32_t>> audio_codes;
     std::mutex mutex;
@@ -1089,7 +1094,7 @@ struct codec_stream_worker {
                         codec, decoder, true_stateful ? &stream_state : nullptr, stream_graph,
                         item.frames, threads, outputs, audio_pp, metrics, run_label,
                         item.chunk_index, item.history_frames, item.final_read, verbose,
-                        decode_mutex)) {
+                        decode_mutex, decode_backend)) {
                     set_failed("decode or audio output failed");
                     return;
                 }
@@ -1154,11 +1159,12 @@ class MagpieRequestRunner {
     MagpieRequestRunner(
         magpietts_model& magpie, const nc::NanoCodecModel& codec,
         MagpieStreamingWorkspace& workspace, MagpieRequestBuffers& buffers,
-        MagpieCodecContext& codec_ctx, std::mutex* codec_mutex, magpie_stream_params& params,
-        stream_audio_outputs& outputs, stream_run_metrics& metrics, const char* run_label,
-        bool write_codes)
+        MagpieCodecContext& codec_ctx, std::mutex* codec_mutex, ggml_backend_t codec_backend,
+        magpie_stream_params& params, stream_audio_outputs& outputs, stream_run_metrics& metrics,
+        const char* run_label, bool write_codes)
         : magpie_(magpie), codec_(codec), workspace_(workspace), buffers_(buffers),
-          codec_ctx_(codec_ctx), codec_mutex_(codec_mutex), params_(params), outputs_(outputs),
+          codec_ctx_(codec_ctx), codec_mutex_(codec_mutex), codec_backend_(codec_backend),
+          params_(params), outputs_(outputs),
           metrics_(metrics), label_(run_label ? run_label : "stream"), write_codes_(write_codes),
           engine_mode_(true) {}
 
@@ -1280,6 +1286,7 @@ class MagpieRequestRunner {
             (size_t)params.codec_queue_depth, params.use_stateful_codec, &metrics_, label_,
             params.verbose);
         codec_worker_->decode_mutex = codec_mutex_;
+        codec_worker_->decode_backend = codec_backend_;
         codec_worker_->start();
         t_start_ = ggml_time_us();
         metrics_.decoder.begin(t_start_);
@@ -2351,6 +2358,7 @@ class MagpieRequestRunner {
     MagpieRequestBuffers& buffers_;
     MagpieCodecContext& codec_ctx_;
     std::mutex* codec_mutex_ = nullptr;
+    ggml_backend_t codec_backend_ = nullptr;
     magpie_stream_params& params_;
     stream_audio_outputs& outputs_;
     stream_run_metrics& metrics_;
@@ -2386,15 +2394,15 @@ class MagpieBatchRequestAdapter final : public IMagpieBatchRequest {
    public:
     MagpieBatchRequestAdapter(
         magpietts_model& magpie, const nc::NanoCodecModel& codec,
-        MagpieStreamingWorkspace& workspace, std::mutex* codec_mutex,
+        MagpieStreamingWorkspace& workspace, std::mutex* codec_mutex, ggml_backend_t codec_backend,
         const magpie_stream_params& params, const magpie_pcm_callback& pcm_callback,
         stream_run_metrics* metrics, const std::string& run_label, bool write_codes)
         : params_(params), label_(run_label), metrics_(metrics ? metrics : &own_metrics_) {
         outputs_.sample_rate = codec.sampleRate();
         outputs_.pcm_callback = pcm_callback;
         runner_ = std::make_unique<MagpieRequestRunner>(
-            magpie, codec, workspace, buffers_, codec_ctx_, codec_mutex, params_, outputs_,
-            *metrics_, label_.c_str(), write_codes);
+            magpie, codec, workspace, buffers_, codec_ctx_, codec_mutex, codec_backend, params_,
+            outputs_, *metrics_, label_.c_str(), write_codes);
     }
 
     bool resolve(
@@ -2447,12 +2455,33 @@ class MagpieBatchRequestAdapter final : public IMagpieBatchRequest {
 };
 
 struct MagpieBatchRequestFactory::Impl {
+    // Codec backends (streams) the requests decode on, round robin: decodes on different
+    // backends overlap on the GPU; requests sharing one take turns.
+    static constexpr int kCodecLanes = 4;
+
     Impl(magpietts_model& magpie_, const nc::NanoCodecModel& codec_)
-        : magpie(magpie_), codec(codec_), workspace(magpie_, codec_) {}
+        : magpie(magpie_), codec(codec_), workspace(magpie_, codec_) {
+        // lane 0 is the model's own backend; the others get their own streams
+        codec_backends.push_back(nullptr);
+        for (int i = 1; i < kCodecLanes; ++i) {
+            ggml_backend_t backend = codec.createComputeBackend();
+            if (!backend)
+                break;
+            codec_backends.push_back(backend);
+        }
+        codec_mutexes = std::vector<std::mutex>(codec_backends.size());
+    }
+    ~Impl() {
+        for (ggml_backend_t backend : codec_backends)
+            if (backend)
+                ggml_backend_free(backend);
+    }
     magpietts_model& magpie;
     const nc::NanoCodecModel& codec;
     MagpieStreamingWorkspace workspace;  // lends the text encoder and the codec decoder
-    std::mutex codec_mutex;
+    std::vector<ggml_backend_t> codec_backends;
+    std::vector<std::mutex> codec_mutexes;
+    std::atomic<size_t> next_codec{0};
 };
 
 MagpieBatchRequestFactory::MagpieBatchRequestFactory(
@@ -2467,9 +2496,10 @@ MagpieBatchRequestFactory::create(
     const magpie_pcm_callback& pcm_callback, stream_run_metrics* metrics,
     const std::string& run_label, bool write_codes, const MagpieBatchRequestLimits& limits,
     std::string* error) {
+    const size_t lane = impl_->next_codec++ % impl_->codec_backends.size();
     auto request = std::make_shared<MagpieBatchRequestAdapter>(
-        impl_->magpie, impl_->codec, impl_->workspace, &impl_->codec_mutex, params, pcm_callback,
-        metrics, run_label, write_codes);
+        impl_->magpie, impl_->codec, impl_->workspace, &impl_->codec_mutexes[lane],
+        impl_->codec_backends[lane], params, pcm_callback, metrics, run_label, write_codes);
     if (!request->resolve(token_chunks, limits, error)) {
         return nullptr;
     }

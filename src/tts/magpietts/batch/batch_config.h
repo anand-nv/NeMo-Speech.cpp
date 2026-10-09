@@ -29,7 +29,7 @@ struct MagpieBatchConfig {
     // runs between two decode steps, and how many decode steps may run back to back while
     // requests wait for prefill.
     int max_prefills_per_iter = 2;
-    int max_decode_steps_before_prefill = 4;
+    int max_decode_steps_before_prefill = 1;
     // Requests waiting for a slot; submissions beyond it are rejected.
     size_t max_queue_depth = 256;
     // CPU threads for CPU backends (encoder, decoder, local transformer).

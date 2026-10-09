@@ -88,6 +88,7 @@ main(int argc, char** argv) {
     std::string tokenizer_dir = env_or("NEMO_SPEECH_TEST_TOKENIZER_DIR", "");
     std::string texts_path, out_dir;
     int n = 0, slots = 8, seed = 1234, max_steps = 0, stress = 0;
+    int prefills_per_iter = -1, decode_steps_before_prefill = -1;
     bool force_cpu = false, use_cfg = true, check = false, same_seed = false;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
@@ -112,6 +113,10 @@ main(int argc, char** argv) {
             max_steps = std::atoi(next().c_str());
         else if (a == "--stress")
             stress = std::atoi(next().c_str());
+        else if (a == "--prefills-per-iter")
+            prefills_per_iter = std::atoi(next().c_str());
+        else if (a == "--decode-steps-before-prefill")
+            decode_steps_before_prefill = std::atoi(next().c_str());
         else if (a == "--cpu")
             force_cpu = true;
         else if (a == "--no-cfg")
@@ -160,6 +165,10 @@ main(int argc, char** argv) {
     config.max_slots = slots;
     config.use_cfg = use_cfg;
     config.threads = 8;
+    if (prefills_per_iter > 0)
+        config.max_prefills_per_iter = prefills_per_iter;
+    if (decode_steps_before_prefill >= 0)
+        config.max_decode_steps_before_prefill = decode_steps_before_prefill;
     tts::MagpieBatchEngine engine(magpie, codec, config);
     std::string error;
     if (!engine.init(&error)) {
@@ -274,9 +283,14 @@ main(int argc, char** argv) {
         // Cancellation: with every slot busy, cancel one active and one queued request.
         std::vector<std::unique_ptr<Job>> extra;
         int extra_remaining = 0;
+        // the request cancelled while active is the longest text, so it is still decoding
+        size_t longest = 0;
+        for (size_t j = 1; j < jobs.size(); ++j)
+            if (jobs[j]->metrics.generated_frames > jobs[longest]->metrics.generated_frames)
+                longest = j;
         for (int i = 0; i < slots + 2; ++i) {
             auto job = std::make_unique<Job>();
-            job->chunks = jobs[static_cast<size_t>(i) % jobs.size()]->chunks;
+            job->chunks = jobs[i == 0 ? longest : static_cast<size_t>(i) % jobs.size()]->chunks;
             job->params.seed = 99 + i;
             job->params.use_cfg = use_cfg;
             Job* jp = job.get();
@@ -295,7 +309,7 @@ main(int argc, char** argv) {
                 ++extra_remaining;
             extra.push_back(std::move(job));
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(150));
+        std::this_thread::sleep_for(std::chrono::milliseconds(40));
         const int64_t active_id = extra[0]->id;
         const int64_t queued_id = extra.back()->id;
         engine.cancel(active_id);

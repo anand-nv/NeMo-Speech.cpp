@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 
+#include "ggml-backend.h"
+
 #include <array>
 #include <cstdint>
 #include <memory>
@@ -48,6 +50,9 @@ class NanoCodecModel {
     bool loaded() const;
     // Whether the decoder runs on an accelerator backend (not the CPU).
     bool onAccelerator() const;
+    // A new compute backend on the model's accelerator (its own stream) that can run this model's
+    // decode graphs alongside the default one; nullptr on the CPU. The caller frees it.
+    ggml_backend_t createComputeBackend() const;
 
     const NanoCodecHParams& hparams() const;
     int sampleRate() const;
@@ -113,9 +118,11 @@ class NanoCodecDecoder {
     bool decode(const NanoCodecFrames& frames, int threads, std::vector<float>& audio) const;
     bool initStreamGraph(
         NanoCodecStreamState& state, int chunk_frames, NanoCodecStreamGraph& graph) const;
+    // `backend` (optional, from NanoCodecModel::createComputeBackend) computes the chunk instead
+    // of the model's default backend, so decodes on different backends can overlap.
     bool decodeStream(
         NanoCodecStreamState& state, NanoCodecStreamGraph& graph, const NanoCodecFrames& frames,
-        int threads, std::vector<float>& audio) const;
+        int threads, std::vector<float>& audio, ggml_backend_t backend = nullptr) const;
     bool decodeStreamAll(
         const NanoCodecFrames& frames, int chunk_frames, int threads,
         std::vector<float>& audio) const;

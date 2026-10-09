@@ -92,8 +92,10 @@ Each scheduler iteration does four things:
 3. Decodes one stacked frame for every decoding request in one batched step.
 4. Evicts the requests that ended.
 
-NanoCodec runs per request on its own worker thread. Codec decodes are
-serialized because the requests share the codec backend.
+NanoCodec runs per request on its own worker thread. Requests are spread over
+four codec streams (the codec model's backend plus three more instances on the
+same GPU), so decodes on different streams overlap. Requests sharing a stream
+take turns.
 
 ## Performance notes (RTX A4500, v2607 Q8_0)
 
@@ -105,10 +107,25 @@ serialized because the requests share the codec backend.
   | `--max-batch-size` | concurrency 1 / 4 / 8 | mean TTFA at 8 |
   |---|---|---|
   | 1 | RTFx 34.3 / 34.3 / 34.4 | 861 ms |
-  | 8 | RTFx 34.5 / 59.2 / 67.8 | 94 ms |
+  | 8 | RTFx 34.9 / 62.2 / 73.4 | 70 ms |
+
+  These are LJSpeech numbers (`BENCHMARK.md`).
 
 - **What limits throughput today:**
-  1. Serialized NanoCodec decodes across requests.
-  2. Prefill, about 13 ms per request and serialized.
+  1. Prefill, about 13 ms per request and serialized.
+  2. NanoCodec, now four streams.
   3. In the kernels, F32 KV-cache reads in self-attention and the
      order-preserving per-lane-pair reductions.
+- **Tried and not kept:**
+  - *Prefill on a side CUDA stream, overlapped with decode steps.* The
+    persistent decode kernels occupy every SM, so the overlapped prefill ran
+    slower and the batch filled more slowly. It gave no gain on the ggml path
+    either.
+  - *Warp-per-(lane, head) self-attention.* It was slower than one item per
+    block at the cache lengths measured.
+- **Next steps:**
+  - Batched prefill: every request's baked-context prefill has the same length,
+    and only the text differs.
+  - A batched NanoCodec.
+  - An F16 self-attention arena. This halves the KV traffic, but the engine
+    would no longer reproduce the serial runtime bit for bit.

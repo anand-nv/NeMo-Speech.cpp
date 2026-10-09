@@ -1660,7 +1660,9 @@ nc_stream_decode_graph_init(
 static bool
 decode_eval_stream(
     const nc_model& model, nc_stream_state& state, nc_stream_decode_graph& graph,
-    const std::vector<std::array<int32_t, 8>>& frames, int threads, std::vector<float>& audio) {
+    const std::vector<std::array<int32_t, 8>>& frames, int threads, std::vector<float>& audio,
+    ggml_backend_t compute_backend = nullptr) {
+    ggml_backend_t backend = compute_backend ? compute_backend : model.backend;
     const ggml_nvtx::range nvtx_range("nanocodec_decode_eval_stream");
     if (frames.empty()) {
         audio.clear();
@@ -1694,14 +1696,14 @@ decode_eval_stream(
     }
     // Streaming history is device-resident and updated inside the graph.
 
-    if (ggml_backend_is_cpu(model.backend)) {
-        ggml_backend_cpu_set_n_threads(model.backend, threads);
+    if (ggml_backend_is_cpu(backend)) {
+        ggml_backend_cpu_set_n_threads(backend, threads);
     }
 
     ggml_status status = GGML_STATUS_FAILED;
     {
         const ggml_nvtx::range nvtx_compute("nanocodec_stream_graph_compute");
-        status = ggml_backend_graph_compute(model.backend, graph.gf);
+        status = ggml_backend_graph_compute(backend, graph.gf);
     }
     if (status != GGML_STATUS_SUCCESS) {
         fprintf(stderr, "ggml stream graph compute failed: %s\n", ggml_status_to_string(status));
@@ -1855,6 +1857,21 @@ NanoCodecModel::onAccelerator() const {
     return loaded() && !ggml_backend_is_cpu(impl_->model.backend);
 }
 
+ggml_backend_t
+NanoCodecModel::createComputeBackend() const {
+    if (!onAccelerator()) {
+        return nullptr;
+    }
+    ggml_backend_dev_t dev = ggml_backend_get_device(impl_->model.backend);
+    ggml_backend_t backend = dev ? ggml_backend_dev_init(dev, nullptr) : nullptr;
+#if defined(GGML_USE_CUDA) && defined(NEMO_SPEECH_GGML_PATCHED)
+    if (backend && ggml_backend_is_cuda(backend)) {
+        ggml_backend_cuda_set_stream_priority(backend, -2);  // as the default codec backend
+    }
+#endif
+    return backend;
+}
+
 const NanoCodecHParams&
 NanoCodecModel::hparams() const {
     return impl_ ? impl_->model.hparams : empty_hparams();
@@ -1979,7 +1996,7 @@ NanoCodecDecoder::initStreamGraph(
 bool
 NanoCodecDecoder::decodeStream(
     NanoCodecStreamState& state, NanoCodecStreamGraph& graph, const NanoCodecFrames& frames,
-    int threads, std::vector<float>& audio) const {
+    int threads, std::vector<float>& audio, ggml_backend_t backend) const {
     if (!require_loaded(model_) || !state.impl_ || !graph.impl_) {
         return false;
     }
@@ -1994,7 +2011,7 @@ NanoCodecDecoder::decodeStream(
         }
     }
     return decode_eval_stream(
-        model_->impl_->model, state.impl_->state, graph.impl_->graph, frames, threads, audio);
+        model_->impl_->model, state.impl_->state, graph.impl_->graph, frames, threads, audio, backend);
 }
 
 bool
