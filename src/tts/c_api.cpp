@@ -196,6 +196,8 @@ to_config(const nemo_speech_tts_synthesizer_config* c) {
             cfg.longform_mode = to_longform(r->longform_mode);
         if (HAS_FIELD(r, nemo_speech_tts_runtime_config, lt_fp32))
             cfg.lt_fp32 = r->lt_fp32;
+        if (HAS_FIELD(r, nemo_speech_tts_runtime_config, max_batch_size))
+            cfg.max_batch_size = r->max_batch_size > 0 ? r->max_batch_size : 1;
     }
     return cfg;
 }
@@ -407,6 +409,7 @@ nemo_speech_tts_runtime_config_default(void) {
     c.uma_mode = from_uma(d.uma_mode);
     c.longform_mode = from_longform(d.longform_mode);
     c.lt_fp32 = d.lt_fp32;
+    c.max_batch_size = d.max_batch_size;
     return c;
 }
 

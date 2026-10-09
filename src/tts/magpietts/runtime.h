@@ -42,6 +42,10 @@ struct MagpieRuntimeConfig {
     int codec_history_frames = -1;
     int codec_future_frames = 1;
     int window_ms = 0;
+    // In-flight batching: up to this many concurrent synthesize() calls share batched decoder
+    // steps (each still streams its own audio). 1 = one request at a time. Needs the local
+    // transformer; every request uses this config's use_cfg.
+    int max_batch_size = 1;
     float temperature = 0.0f;
     float cfg_scale = 0.0f;
     bool override_temperature = false;

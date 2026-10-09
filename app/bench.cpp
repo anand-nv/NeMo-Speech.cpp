@@ -510,8 +510,11 @@ print_bench_help(const char* program) {
         "  --seed N                Sampling seed (default: 1; -1 = time-based)\n"
         "  --steps N --top-k N --temperature N --cfg-scale N\n"
         "  --tts.KEY VALUE         Override any C++ TTS setting\n"
-        "  The MagpieTTS runtime serializes requests: concurrency > 1 measures\n"
-        "  queueing, and client latency includes queue wait.\n"
+        "  --max-batch-size N      In-flight batching: up to N concurrent requests\n"
+        "                          share batched decoder steps (default 1)\n"
+        "  With --max-batch-size 1 the MagpieTTS runtime serializes requests:\n"
+        "  concurrency > 1 then measures queueing, and client latency includes\n"
+        "  queue wait.\n"
 #endif
 #if defined(NEMO_SPEECH_CLI_DIAR)
         "\ndiarize options:\n"

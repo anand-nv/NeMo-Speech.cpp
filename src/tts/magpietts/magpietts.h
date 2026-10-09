@@ -14,6 +14,9 @@
 
 namespace nemo_speech::tts {
 
+class MagpieBatchEngine;
+struct MagpieBatchConfig;
+
 enum magpie_longform_mode {
     MAGPIE_LONGFORM_AUTO,
     MAGPIE_LONGFORM_OFF,
@@ -156,6 +159,10 @@ class MagpieStreamingRuntime {
         magpie_stream_params& params, const std::vector<std::vector<int32_t>>& token_chunks,
         const magpie_pcm_callback& pcm_callback, stream_run_metrics& metrics, const char* run_label,
         bool write_codes);
+    // An in-flight batching engine over the loaded models (nullptr with the reason in error).
+    // While it runs, synthesize on the engine instead of this runtime.
+    std::unique_ptr<MagpieBatchEngine> createBatchEngine(
+        const MagpieBatchConfig& config, std::string* error);
 
    private:
     class Impl;

@@ -53,6 +53,23 @@ By input length:
 | Medium (55 words) | **9.0** · 10.3 | **54.3×** | 127.1 · 131.1 | 1.5× |
 | Long (258 words) | **10.1** · 11.0 | **56.0×** | 127.1 · 128.2 | 1.5× |
 
+### Concurrent requests (in-flight batching), RTX A4500
+
+With `--tts.max-batch-size N` (or `bench tts --max-batch-size N`), up to N
+concurrent requests share batched decoder steps; see
+[TTS in-flight batching](docs/development/tts-batching.md). The inputs are the
+same LJSpeech sentences, with 30 requests per concurrency level. Throughput is
+total audio over wall time; latency is client-side and includes queueing.
+
+| `max-batch-size` | Concurrency | Throughput (RTFX) | Time to first audio (ms)<br>avg · p99 | Inter-chunk latency (ms)<br>avg · p99 |
+|:---:|:---:|:---:|:---:|:---:|
+| 1 | 1 | 34.3× | 15.7 · 25.1 | 5.0 · 9.4 |
+| 1 | 4 | 34.2× | 493.8 · 2367.7 | 5.1 · 9.5 |
+| 1 | 8 | 34.0× | 1078.6 · 3055.0 | 5.1 · 9.5 |
+| 8 | 1 | 34.5× | 22.7 · 34.6 | 4.8 · 5.2 |
+| 8 | 4 | **58.2×** | **56.8** · 115.5 | 11.1 · 33.3 |
+| 8 | 8 | **66.8×** | **103.3** · 215.2 | 19.0 · 75.8 |
+
 ### DGX Spark (GB10)
 
 | Engine | Time to first audio (ms)<br>avg · p99 | Inter-chunk latency (ms)<br>avg · p99 | Throughput (RTFX) |

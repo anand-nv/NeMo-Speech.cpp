@@ -85,6 +85,8 @@ class TtsWorkload : public Workload {
         } else if (arg == "--temperature") {
             options_.temperature = static_cast<float>(parse_double(value(), arg));
             options_.override_temperature = true;
+        } else if (arg == "--max-batch-size") {
+            parsed_.runtime.max_batch_size = parse_int(value(), arg, 1, 64);
         } else if (arg == "--cfg-scale") {
             options_.cfg_scale = static_cast<float>(parse_double(value(), arg));
             options_.override_cfg_scale = true;

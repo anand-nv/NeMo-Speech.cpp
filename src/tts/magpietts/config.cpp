@@ -148,6 +148,9 @@ register_runtime_config(common::ParameterParser& p, MagpieRuntimeConfig& c) {
     p.Register("codec-future-frames", &c.codec_future_frames, "Rolling codec future frames");
     p.Register("window-ms", &c.window_ms, "Overlap-add window duration in milliseconds");
     p.Register(
+        "max-batch-size", &c.max_batch_size,
+        "Concurrent requests that share batched decoder steps (in-flight batching); 1 = serial");
+    p.Register(
         "temperature",
         [&c](const std::string& value) {
             c.temperature = common::detail::to_float("tts.temperature", value);

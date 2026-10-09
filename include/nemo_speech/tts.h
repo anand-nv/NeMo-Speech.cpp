@@ -102,6 +102,9 @@ typedef struct nemo_speech_tts_runtime_config {
     nemo_speech_tts_uma_mode uma_mode;
     nemo_speech_tts_longform_mode longform_mode;
     bool lt_fp32;
+    // In-flight batching: concurrent synthesize calls that share batched decoder steps; 1 (or 0)
+    // synthesizes one request at a time.
+    int32_t max_batch_size;
 } nemo_speech_tts_runtime_config;
 
 typedef struct nemo_speech_tts_synthesizer_config {

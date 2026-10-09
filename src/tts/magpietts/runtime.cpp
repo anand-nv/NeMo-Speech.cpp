@@ -10,6 +10,7 @@
 #include <thread>
 #include <utility>
 
+#include "batch/batch_engine.h"
 #include "magpietts.h"
 #include "model_logging.h"
 #include "token_utils.h"
@@ -97,6 +98,12 @@ validate_config(const MagpieRuntimeConfig& config) {
     if (config.window_ms < 0) {
         throw std::invalid_argument("window_ms must be non-negative");
     }
+    if (config.max_batch_size < 1) {
+        throw std::invalid_argument("max_batch_size must be at least 1");
+    }
+    if (config.max_batch_size > 1 && !config.use_local_transformer) {
+        throw std::invalid_argument("in-flight batching (max_batch_size > 1) needs the local transformer");
+    }
 }
 
 }  // namespace
@@ -122,6 +129,17 @@ class MagpieTtsRuntime::Impl {
             speaker_names_ = default_speaker_names(stream_->speakerCount());
         }
         model_name_ = "magpietts";
+        if (config_.max_batch_size > 1) {
+            MagpieBatchConfig batch;
+            batch.max_slots = config_.max_batch_size;
+            batch.use_cfg = config_.use_cfg;
+            batch.threads = config_.threads > 0 ? config_.threads : 8;
+            std::string error;
+            batch_ = stream_->createBatchEngine(batch, &error);
+            if (!batch_) {
+                throw std::runtime_error("failed to start the MagpieTTS batching engine: " + error);
+            }
+        }
     }
 
     ~Impl() = default;
@@ -160,7 +178,11 @@ class MagpieTtsRuntime::Impl {
     MagpieSynthesisStats synthesize_impl(
         const std::vector<std::vector<int32_t>>& token_chunks, const std::vector<int32_t>& tokens,
         const MagpieSynthesisOptions& options, const MagpieTtsRuntime::PcmCallback& pcm_callback) {
-        std::lock_guard<std::mutex> lock(mutex_);
+        // Serial synthesis owns the single workspace; the batching engine takes concurrent calls.
+        std::unique_lock<std::mutex> lock(mutex_, std::defer_lock);
+        if (!batch_) {
+            lock.lock();
+        }
 
         magpie_stream_params params;
         params.magpie_model = config_.magpie_model;
@@ -206,16 +228,19 @@ class MagpieTtsRuntime::Impl {
         params.longform_mode = to_internal(config_.longform_mode);
 
         stream_run_metrics metrics;
-        if (!stream_->synthesize(
-                params, token_chunks,
-                [&](const std::vector<uint8_t>& bytes) {
-                    if (!pcm_callback || bytes.empty()) {
-                        return true;
-                    }
-                    return pcm_callback(
-                        std::string(reinterpret_cast<const char*>(bytes.data()), bytes.size()));
-                },
-                metrics, "riva_tts", false)) {
+        const magpie_pcm_callback pcm = [&](const std::vector<uint8_t>& bytes) {
+            if (!pcm_callback || bytes.empty()) {
+                return true;
+            }
+            return pcm_callback(std::string(reinterpret_cast<const char*>(bytes.data()), bytes.size()));
+        };
+        if (batch_) {
+            std::string error;
+            if (!batch_->synthesize(params, token_chunks, pcm, metrics, "riva_tts", &error)) {
+                throw std::runtime_error(
+                    "MagpieTTS synthesis failed" + (error.empty() ? std::string() : ": " + error));
+            }
+        } else if (!stream_->synthesize(params, token_chunks, pcm, metrics, "riva_tts", false)) {
             throw std::runtime_error("MagpieTTS synthesis failed");
         }
 
@@ -266,6 +291,7 @@ class MagpieTtsRuntime::Impl {
    private:
     MagpieRuntimeConfig config_;
     std::unique_ptr<MagpieStreamingRuntime> stream_;
+    std::unique_ptr<MagpieBatchEngine> batch_;  // declared after stream_: stopped first
     std::vector<std::string> speaker_names_;
     std::string model_name_;
     std::string tokenizer_profile_;

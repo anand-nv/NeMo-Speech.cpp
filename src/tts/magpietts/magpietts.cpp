@@ -23,6 +23,7 @@
 #include <utility>
 
 #include "audio_pp.h"
+#include "batch/batch_engine.h"
 #include "batch/batch_request.h"
 #include "decoder.h"
 #include "encoder.h"
@@ -2509,6 +2510,20 @@ MagpieStreamingRuntime::synthesize(
     return stream_magpie_to_audio(
         impl_->magpie, impl_->codec, *impl_->workspace, params, token_chunks, outputs, metrics,
         run_label, write_codes);
+}
+
+std::unique_ptr<MagpieBatchEngine>
+MagpieStreamingRuntime::createBatchEngine(const MagpieBatchConfig& config, std::string* error) {
+    if (!impl_ || !impl_->magpie.loaded() || !impl_->codec.loaded()) {
+        if (error)
+            *error = "the runtime has no loaded models";
+        return nullptr;
+    }
+    auto engine = std::make_unique<MagpieBatchEngine>(impl_->magpie, impl_->codec, config);
+    if (!engine->init(error)) {
+        return nullptr;
+    }
+    return engine;
 }
 
 bool

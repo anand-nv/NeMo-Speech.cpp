@@ -27,6 +27,11 @@ nemo-speech serve \
 For Riva-compatible gRPC, use the same engine options with `riva_server` and
 `--bind 0.0.0.0:50051`.
 
+By default the TTS engine synthesizes one request at a time, and concurrent
+requests wait for each other. Add `--tts.max-batch-size N` to decode up to `N`
+concurrent requests together (in-flight batching; see
+[TTS in-flight batching](../development/tts-batching.md)).
+
 `--tts.tokenizer-model-dir` is the extracted MagpieTTS `.nemo` directory - see
 [TTS models](models.md) for how to obtain it.
 
@@ -181,6 +186,7 @@ All keys nest under `tts.`. Defaults shown; CLI alias listed where one exists.
 | key | CLI alias | default | meaning |
 |---|---|---|---|
 | `tts.threads` | `--threads` | `4` | CPU threads for Magpie + codec; use the dotted key with HTTP, where `--threads` controls request workers |
+| `tts.max-batch-size` | - | `1` | in-flight batching: concurrent requests that share batched decoder steps; `1` synthesizes one request at a time (see [TTS in-flight batching](../development/tts-batching.md)) |
 | `tts.codec-threads` | - | `0` | codec CPU threads; `0` = use `threads` |
 | `tts.lt-backend` | - | `auto` | local-transformer backend: `auto`/`cpu`/`cuda` |
 | `tts.lt-fp32` | `--tts.local-transformer-fp32` | `false` | run the local transformer in FP32 |

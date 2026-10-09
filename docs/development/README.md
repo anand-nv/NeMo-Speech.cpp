@@ -11,6 +11,8 @@ the server want [ASR configuration](../asr/configuration.md),
   `check_backend_coverage` for catching silent CPU fallbacks on a new backend.
 - [`asr-batching.md`](asr-batching.md) - exact-shape neural microbatching and
   indexed streaming-state arenas.
+- [`tts-batching.md`](tts-batching.md) - MagpieTTS in-flight batching: the
+  scheduler, slot arenas and the batched fused CUDA kernels.
 - [`patches/README.md`](../../patches/README.md) - the project's llama.cpp and ggml
   patches, how builds apply them, and how to edit them.
 - [`cublas-shim.md`](cublas-shim.md) - the in-tree drop-in cuBLAS replacement

@@ -244,6 +244,25 @@ def main() -> None:
         print(f"tts round trip: {round_trip.strip()!r} (similarity {ratio:.2f})")
         check(ratio >= 0.8, "TTS output transcribes back to the input text")
 
+        # In-flight batching: four concurrent requests share batched decoder steps.
+        texts = [
+            TTS_TEXT,
+            "Batched requests share every decoder step.",
+            "Each one streams its own audio.",
+            "Short one.",
+        ]
+        bench_args = ["bench", "tts", "--backend", args.backend, "--concurrency", "4"]
+        bench_args += ["--max-batch-size", "4", "--warmup", "0", "--json"]
+        for text in texts:
+            bench_args += ["--text", text]
+        batched = json.loads(run(args.binary, *bench_args))
+        durations = [
+            item["metrics"]["audio_seconds"]["mean"] for item in batched["runs"][0]["inputs"]
+        ]
+        print(f"batched tts: {['%.2fs' % d for d in durations]}, rtfx {batched['runs'][0]['rtfx']:.1f}")
+        check(len(durations) == len(texts), "every batched request returned a result")
+        check(all(0.3 <= d <= 8.0 for d in durations), "batched TTS outputs have plausible durations")
+
         if args.tn_model_dir:
             wav = work / "tn.wav"
             run(
