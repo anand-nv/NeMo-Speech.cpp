@@ -33,6 +33,26 @@ if(GGML_CUDA AND NEMO_SPEECH_GGML_PATCHED)
         SKIP_RETURN_CODE 77 TIMEOUT 120)
 endif()
 
+# In-flight batching: slot pool / bucket logic, and the batched decoder step against the serial
+# decoder (needs a model: NEMO_SPEECH_TEST_TTS_MODEL, skipped otherwise).
+add_executable(test_magpietts_slot_pool test_magpietts_slot_pool.cpp)
+target_link_libraries(test_magpietts_slot_pool PRIVATE nemo_speech_tts_magpietts)
+add_test(NAME magpietts_slot_pool COMMAND test_magpietts_slot_pool)
+if(NEMO_SPEECH_GGML_PATCHED)
+    add_executable(test_magpietts_batch_decoder test_magpietts_batch_decoder.cpp)
+    target_link_libraries(test_magpietts_batch_decoder PRIVATE nemo_speech_tts_magpietts)
+    add_test(NAME magpietts_batch_decoder COMMAND test_magpietts_batch_decoder)
+    set_tests_properties(magpietts_batch_decoder PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600)
+endif()
+
+# The fused attention op over a multi-slot K/V arena (in-flight batching layout): CPU forward vs a
+# scalar reference, and CUDA vs CPU when a GPU backend is present.
+if(NEMO_SPEECH_GGML_PATCHED)
+    add_executable(test_magpietts_slot_attention test_magpietts_slot_attention.cpp)
+    target_link_libraries(test_magpietts_slot_attention PRIVATE ggml)
+    add_test(NAME magpietts_slot_attention COMMAND test_magpietts_slot_attention)
+endif()
+
 if(GGML_CUDA AND NEMO_SPEECH_GGML_PATCHED)
     add_executable(test_magpietts_cached_attention test_magpietts_cached_attention.cpp)
     target_link_libraries(test_magpietts_cached_attention PRIVATE nemo_speech_tts_magpietts)

@@ -1,0 +1,256 @@
+From: Claude <noreply@anthropic.com>
+Subject: ggml-cpu: run the fused attention op on the CPU
+
+GGML_OP_FUSED_ATTN (ggml_fused_relpos_attn, ggml_fused_attn_cached) had a
+CUDA kernel only, so graphs built on it could not run on the CPU backend
+and the MagpieTTS slot-arena decoder (one circular K/V cache row per
+in-flight request, indexed by slot_ids) had no CPU path or CPU reference.
+Add a reference CPU forward with the CUDA semantics: per-batch-item slot,
+ring head and optional valid length, per-item mask columns, the
+relative-position rel-shift, F32/F16 K/V/P, and the chunk appended to the
+circular cache at ring_head after every thread has read it.
+
+Callers that pick the fused op by backend (FastConformer, MagpieTTS) still
+gate it on CUDA, so their CPU graphs are unchanged.
+
+Upstream: stays here with the op it implements.
+
+diff --git a/ggml/src/ggml-cpu/ggml-cpu.c b/ggml/src/ggml-cpu/ggml-cpu.c
+index 2ff83dfeeb81b633c2fd0fc5afee81c1fec1efa5..27a4733d7d58d459b32247e4308a94219237a475 100644
+--- a/ggml/src/ggml-cpu/ggml-cpu.c
++++ b/ggml/src/ggml-cpu/ggml-cpu.c
+@@ -2036,7 +2036,7 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
+             } break;
+         case GGML_OP_FUSED_ATTN:
+             {
+-                GGML_ABORT("FUSED_ATTN has no CPU path (CUDA-only)");
++                ggml_compute_forward_fused_attn(params, tensor);
+             } break;
+         case GGML_OP_CONV1D_FUSED:
+             {
+@@ -2439,6 +2439,7 @@ static int ggml_get_n_tasks(struct ggml_tensor * node, int n_threads) {
+         case GGML_OP_ARGSORT:
+         case GGML_OP_TOP_K:
+         case GGML_OP_FLASH_ATTN_EXT:
++        case GGML_OP_FUSED_ATTN:
+         case GGML_OP_FLASH_ATTN_BACK:
+         case GGML_OP_SSM_CONV:
+         case GGML_OP_SSM_SCAN:
+@@ -3001,6 +3002,14 @@ struct ggml_cplan ggml_graph_plan(
+                     {
+                         cur += sizeof(int32_t)*node->src[0]->ne[0]*n_tasks;
+                     } break;
++                case GGML_OP_FUSED_ATTN:
++                    {
++                        // Per thread: scores over every key, plus the biased queries.
++                        const int64_t d_k = node->src[0]->ne[0];
++                        const int64_t kv_len = node->src[1]->ne[1] +
++                            (node->src[7] ? ggml_get_op_params_i32(node, 1) : 0);
++                        cur = sizeof(float)*(kv_len + 2*d_k + CACHE_LINE_SIZE_F32)*n_tasks;
++                    } break;
+                 case GGML_OP_FLASH_ATTN_EXT:
+                     {
+                         const int64_t neq2 = node->src[0]->ne[2]; // number of query heads
+diff --git a/ggml/src/ggml-cpu/ggml-cpu.cpp b/ggml/src/ggml-cpu/ggml-cpu.cpp
+index 194c87e2f5306b08c5431f2f1216e1d09100b0fc..efc9ebe389d73be70ea63b3384a7e58af3c3666e 100644
+--- a/ggml/src/ggml-cpu/ggml-cpu.cpp
++++ b/ggml/src/ggml-cpu/ggml-cpu.cpp
+@@ -441,8 +441,9 @@ static bool ggml_backend_cpu_device_supports_op(ggml_backend_dev_t dev, const st
+ 
+     switch (op->op) {
+         case GGML_OP_CONV1D_FUSED:
+-        case GGML_OP_FUSED_ATTN:
+             return false;  // CUDA-only; CPU falls back to the unfused graph
++        case GGML_OP_FUSED_ATTN:
++            return op->src[1]->type == GGML_TYPE_F32 || op->src[1]->type == GGML_TYPE_F16;
+         case GGML_OP_CPY:
+         case GGML_OP_SET_ROWS:
+             return
+diff --git a/ggml/src/ggml-cpu/ops.cpp b/ggml/src/ggml-cpu/ops.cpp
+index 53555e3cede08cef22792219657ba5bc00731d42..c18341fab842617604aef3b01c85d1e63a31085b 100644
+--- a/ggml/src/ggml-cpu/ops.cpp
++++ b/ggml/src/ggml-cpu/ops.cpp
+@@ -12355,3 +12355,171 @@ void ggml_compute_forward_lightning_indexer(
+         }
+     }
+ }
++
++// ggml_fused_attention (GGML_OP_FUSED_ATTN): reference CPU forward with the CUDA kernel's
++// semantics. Q is [d_k, q_len, n_head, batch] F32; K/V (and the relative-position table P) are
++// F32 or F16. Cached form: keys are the cache_len rows of the slot's circular cache (logical row
++// j at physical (ring_head + j) % cache_len, the oldest first) followed by the chunk_len new
++// rows; with a [batch, 2] cache_state only the newest valid_len cached rows are attended. After
++// every thread has read the cache, the chunk is appended at ring_head (the caller advances it).
++
++static inline float ggml_fused_attn_load(const char * base, ggml_type type, size_t idx) {
++    return type == GGML_TYPE_F16
++        ? GGML_CPU_FP16_TO_FP32(((const ggml_fp16_t *) base)[idx])
++        : ((const float *) base)[idx];
++}
++
++void ggml_compute_forward_fused_attn(const ggml_compute_params * params, ggml_tensor * dst) {
++    const ggml_tensor * q           = dst->src[0];
++    const ggml_tensor * k           = dst->src[1];
++    const ggml_tensor * v           = dst->src[2];
++    const ggml_tensor * p           = dst->src[3];
++    const ggml_tensor * bias_u      = dst->src[4];
++    const ggml_tensor * bias_v      = dst->src[5];
++    const ggml_tensor * mask        = dst->src[6];
++    ggml_tensor       * kv_cache    = dst->src[7];
++    const ggml_tensor * slot_ids    = dst->src[8];
++    const ggml_tensor * cache_state = dst->src[9];
++    const bool cached   = kv_cache != nullptr;
++    const bool relative = p != nullptr;
++
++    GGML_ASSERT(q->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32);
++    GGML_ASSERT(k->type == v->type && (!relative || p->type == k->type));
++
++    const int64_t d_k       = q->ne[0];
++    const int64_t q_len     = q->ne[1];
++    const int64_t n_head    = q->ne[2];
++    const int64_t batch     = q->ne[3];
++    const int64_t chunk_len = k->ne[1];
++    const int64_t cache_len = cached ? ggml_get_op_params_i32(dst, 1) : 0;
++    const int64_t kv_len    = cache_len + chunk_len;
++
++    float scale;
++    memcpy(&scale, dst->op_params, sizeof(scale));
++
++    const size_t ke = ggml_type_size(k->type);
++    const int64_t n_feat   = d_k * n_head;
++    const int64_t cache_ss = cached ? (int64_t) (kv_cache->nb[1] / sizeof(float)) : 0;
++    const int64_t cache_sp = cached ? (int64_t) (kv_cache->nb[2] / sizeof(float)) : 0;
++    const int32_t * slots       = cached ? (const int32_t *) slot_ids->data : nullptr;
++    const int32_t * ring_heads  = cached ? (const int32_t *) cache_state->data : nullptr;
++    const int32_t * active_lens = cached && cache_state->ne[1] == 2 ? ring_heads + cache_state->ne[0] : nullptr;
++
++    // Mask strides (in floats) between queries and between batch items, as in the CUDA kernel.
++    const int64_t m_sq = (mask && !cached && mask->ne[1] == q_len && q_len > 1)
++        ? (int64_t) (mask->nb[1] / sizeof(float)) : 0;
++    const int64_t m_sb = (mask && batch > 1 &&
++                          ((cached && mask->ne[1] == batch) || (!cached && mask->ne[3] == batch)))
++        ? (int64_t) ((cached ? mask->nb[1] : mask->nb[3]) / sizeof(float)) : 0;
++
++    const int ith = params->ith;
++    const int nth = params->nth;
++    float * scratch = (float *) params->wdata + (size_t) ith * (kv_len + 2 * d_k + CACHE_LINE_SIZE_F32);
++    float * sc = scratch;
++    float * qu = scratch + kv_len;
++    float * qv = qu + d_k;
++
++    // key j of batch item b, head h, feature d (logical order: cached rows, then the chunk)
++    auto key_ptr = [&](const ggml_tensor * src, int plane, int64_t b, int64_t h, int64_t j, int64_t & idx) -> const char * {
++        if (cached && j < cache_len) {
++            int64_t phys = ring_heads[b] + j;
++            if (phys >= cache_len) {
++                phys -= cache_len;
++            }
++            const float * base = (const float *) kv_cache->data + plane * cache_sp + slots[b] * cache_ss;
++            idx = phys * n_feat + h * d_k;
++            return (const char *) base;
++        }
++        const int64_t jj = j - cache_len;
++        idx = 0;
++        return (const char *) src->data + b * src->nb[3] + h * src->nb[2] + jj * src->nb[1];
++    };
++
++    const int64_t n_rows = batch * n_head * q_len;
++    for (int64_t row = ith; row < n_rows; row += nth) {
++        const int64_t i = row % q_len;
++        const int64_t h = (row / q_len) % n_head;
++        const int64_t b = row / (q_len * n_head);
++        const float * qrow = (const float *) ((const char *) q->data + b * q->nb[3] + h * q->nb[2] + i * q->nb[1]);
++        for (int64_t d = 0; d < d_k; ++d) {
++            qu[d] = qrow[d] + (relative ? ((const float *) bias_u->data)[h * d_k + d] : 0.0f);
++            qv[d] = qrow[d] + (relative ? ((const float *) bias_v->data)[h * d_k + d] : 0.0f);
++        }
++        const float * mrow = mask ? (const float *) mask->data + b * m_sb + i * m_sq : nullptr;
++        const int64_t key_begin = active_lens ? cache_len - active_lens[b] : 0;
++
++        float mx = -INFINITY;
++        for (int64_t j = key_begin; j < kv_len; ++j) {
++            int64_t idx = 0;
++            const char * kb = key_ptr(k, 0, b, h, j, idx);
++            const ggml_type kt = (cached && j < cache_len) ? GGML_TYPE_F32 : k->type;
++            float s = 0.0f;
++            for (int64_t d = 0; d < d_k; ++d) {
++                s += ggml_fused_attn_load(kb, kt, idx + d) * qu[d];
++            }
++            if (relative) {
++                const int64_t r = (q_len - 1) + j - i;  // rel-shift index
++                const char * pr = (const char *) p->data + h * p->nb[2] + r * p->nb[1];
++                float bd = 0.0f;
++                for (int64_t d = 0; d < d_k; ++d) {
++                    bd += ggml_fused_attn_load(pr, p->type, d) * qv[d];
++                }
++                s += bd;
++            }
++            s = s * scale + (mrow ? mrow[j] : 0.0f);
++            sc[j] = s;
++            mx = std::max(mx, s);
++        }
++        float sum = 0.0f;
++        for (int64_t j = key_begin; j < kv_len; ++j) {
++            const float e = mx > -INFINITY ? expf(sc[j] - mx) : 0.0f;
++            sc[j] = e;
++            sum += e;
++        }
++        const float inv = sum > 0.0f ? 1.0f / sum : 0.0f;
++        float * out = (float *) ((char *) dst->data + b * dst->nb[3] + h * dst->nb[2] + i * dst->nb[1]);
++        for (int64_t d = 0; d < d_k; ++d) {
++            out[d] = 0.0f;
++        }
++        for (int64_t j = key_begin; j < kv_len; ++j) {
++            int64_t idx = 0;
++            const char * vb = key_ptr(v, 1, b, h, j, idx);
++            const ggml_type vt = (cached && j < cache_len) ? GGML_TYPE_F32 : v->type;
++            const float w = sc[j];
++            for (int64_t d = 0; d < d_k; ++d) {
++                out[d] += w * ggml_fused_attn_load(vb, vt, idx + d);
++            }
++        }
++        for (int64_t d = 0; d < d_k; ++d) {
++            out[d] *= inv;
++        }
++    }
++
++    if (!cached) {
++        return;
++    }
++    // Append the chunk's last min(cache_len, chunk_len) rows at ring_head once every thread has
++    // finished reading the cache.
++    ggml_barrier(params->threadpool);
++    const int64_t append = std::min(cache_len, chunk_len);
++    const int64_t n_jobs = batch * 2 * n_head;
++    for (int64_t job = ith; job < n_jobs; job += nth) {
++        const int64_t h = job % n_head;
++        const int plane = (int) ((job / n_head) % 2);
++        const int64_t b = job / (2 * n_head);
++        const ggml_tensor * src = plane == 0 ? k : v;
++        float * base = (float *) kv_cache->data + plane * cache_sp + slots[b] * cache_ss;
++        for (int64_t j = 0; j < append; ++j) {
++            const int64_t src_j = chunk_len - append + j;
++            int64_t phys = ring_heads[b] + j;
++            if (phys >= cache_len) {
++                phys -= cache_len;
++            }
++            const char * row = (const char *) src->data + b * src->nb[3] + h * src->nb[2] + src_j * src->nb[1];
++            float * dst_row = base + phys * n_feat + h * d_k;
++            for (int64_t d = 0; d < d_k; ++d) {
++                dst_row[d] = ggml_fused_attn_load(row, src->type, d);
++            }
++        }
++    }
++}
+diff --git a/ggml/src/ggml-cpu/ops.h b/ggml/src/ggml-cpu/ops.h
+index 2728b08b6c976ed864353f8eb84e2e10d309f287..7baac87ea08aea6e053581784724464b5c3817f5 100644
+--- a/ggml/src/ggml-cpu/ops.h
++++ b/ggml/src/ggml-cpu/ops.h
+@@ -87,6 +87,7 @@ void ggml_compute_forward_leaky_relu(const struct ggml_compute_params * params,
+ void ggml_compute_forward_tri(const struct ggml_compute_params * params, struct ggml_tensor * dst);
+ void ggml_compute_forward_fill(const struct ggml_compute_params * params, struct ggml_tensor * dst);
+ void ggml_compute_forward_flash_attn_ext(const struct ggml_compute_params * params, struct ggml_tensor * dst);
++void ggml_compute_forward_fused_attn(const struct ggml_compute_params * params, struct ggml_tensor * dst);
+ void ggml_compute_forward_flash_attn_back(
+         const struct ggml_compute_params * params,
+         const bool masked,

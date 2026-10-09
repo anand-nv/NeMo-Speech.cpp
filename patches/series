@@ -18,3 +18,4 @@ ggml-cpu-f16c-scalar-fp32-fp16-and-row-split-f16-im2col.patch
 llama-keep-equal-length-recurrent-sequences-in-one-ubatch.patch
 llama-enable-nvfp4-in-llama-quantize.patch
 llama-read-the-gemma-3-attention-scale-from-gguf.patch
+ggml-cpu-run-the-fused-attention-op-on-the-cpu.patch
