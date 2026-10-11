@@ -36,6 +36,10 @@ struct MagpieBatchConfig {
     int threads = 4;
     // Use the fused CUDA kernels (Q8_0 models on sm_80+) when available.
     bool use_fused_kernels = true;
+    // Reference policy for benchmarks (static batching): admit a new batch only when no request
+    // is active, waiting up to static_batch_wait_ms for the queue to fill it.
+    bool static_batching = false;
+    int static_batch_wait_ms = 50;
 };
 
 }  // namespace nemo_speech::tts

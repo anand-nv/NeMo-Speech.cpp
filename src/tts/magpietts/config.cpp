@@ -151,6 +151,10 @@ register_runtime_config(common::ParameterParser& p, MagpieRuntimeConfig& c) {
         "max-batch-size", &c.max_batch_size,
         "Concurrent requests that share batched decoder steps (in-flight batching); 1 = serial");
     p.Register(
+        "static-batching", &c.static_batching,
+        "Benchmark reference: with max-batch-size > 1, start a new batch only after the previous "
+        "one finished");
+    p.Register(
         "temperature",
         [&c](const std::string& value) {
             c.temperature = common::detail::to_float("tts.temperature", value);

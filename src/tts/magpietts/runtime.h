@@ -46,6 +46,9 @@ struct MagpieRuntimeConfig {
     // steps (each still streams its own audio). 1 = one request at a time. Needs the local
     // transformer; every request uses this config's use_cfg.
     int max_batch_size = 1;
+    // Benchmark reference for max_batch_size > 1: static batching (a new batch starts only after
+    // every request of the previous one finished decoding).
+    bool static_batching = false;
     float temperature = 0.0f;
     float cfg_scale = 0.0f;
     bool override_temperature = false;

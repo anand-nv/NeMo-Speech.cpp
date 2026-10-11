@@ -14,6 +14,7 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
@@ -185,6 +186,7 @@ class MagpieBatchScheduler {
     std::thread thread_;
     int64_t next_id_ = 1;
     MagpieBatchStats stats_;
+    std::chrono::steady_clock::time_point batch_wait_start_{};  // static batching
 
     // scheduler-thread state
     std::deque<EntryPtr> waiting_;

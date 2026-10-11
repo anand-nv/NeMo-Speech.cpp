@@ -153,6 +153,20 @@ MagpieBatchScheduler::dropCancelled() {
 
 void
 MagpieBatchScheduler::admit() {
+    if (config_.static_batching) {
+        // a batch runs to completion; the next one forms once it is full or has waited enough
+        if (!active_.empty() || waiting_.empty()) {
+            batch_wait_start_ = {};
+            return;
+        }
+        const auto now = std::chrono::steady_clock::now();
+        if (batch_wait_start_ == std::chrono::steady_clock::time_point{})
+            batch_wait_start_ = now;
+        if (static_cast<int>(waiting_.size()) < pool_.capacity() &&
+            now - batch_wait_start_ < std::chrono::milliseconds(config_.static_batch_wait_ms))
+            return;
+        batch_wait_start_ = {};
+    }
     while (!waiting_.empty() && pool_.available() > 0) {
         EntryPtr e = waiting_.front();
         waiting_.pop_front();
@@ -415,7 +429,8 @@ MagpieBatchScheduler::loop() {
             continue;
         }
         std::unique_lock<std::mutex> lock(mutex_);
-        wake_.wait_for(lock, std::chrono::milliseconds(50), [&] {
+        const bool forming = config_.static_batching && !waiting_.empty();
+        wake_.wait_for(lock, std::chrono::milliseconds(forming ? 2 : 50), [&] {
             return stopping_ || !incoming_.empty() || !cancel_ids_.empty();
         });
     }

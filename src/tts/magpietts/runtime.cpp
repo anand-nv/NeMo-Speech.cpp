@@ -133,6 +133,7 @@ class MagpieTtsRuntime::Impl {
             MagpieBatchConfig batch;
             batch.max_slots = config_.max_batch_size;
             batch.use_cfg = config_.use_cfg;
+            batch.static_batching = config_.static_batching;
             batch.threads = config_.threads > 0 ? config_.threads : 8;
             std::string error;
             batch_ = stream_->createBatchEngine(batch, &error);

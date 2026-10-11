@@ -29,6 +29,15 @@ nemo-speech bench tts --text-file utterances.txt \
     --concurrency 1,4,8 --max-batch-size 8
 ```
 
+To compare against static batching, add `--tts.static-batching` (a bare flag;
+it only applies with `--max-batch-size` above 1). The scheduler then admits a
+new batch only when no request is decoding: it waits up to 50 ms
+(`MagpieBatchConfig::static_batch_wait_ms`) for the queue to fill every slot,
+and the batch runs to completion before the next one forms. A slot freed early
+stays idle. This mode is a benchmark reference, not a serving mode. On the
+MiniMax sweep it reached a similar RTFx to continuous batching, with 2-4x
+higher TTFA, because requests that arrive during a batch wait for all of it.
+
 Requirements and limits:
 
 - The local transformer must be enabled. All requests use the engine's
@@ -67,7 +76,7 @@ All files are in `src/tts/magpietts/batch/` unless noted.
 
 | file | role |
 |---|---|
-| `batch_scheduler.*` | the scheduler thread: admission (FCFS), prefill budget, batched decode, eviction, cancellation, finishing threads |
+| `batch_scheduler.*` | the scheduler thread: admission (FCFS, or static batches for benchmarks), prefill budget, batched decode, eviction, cancellation, finishing threads |
 | `slot_pool.*` | slot ownership, planar lane layout (`[cond_0..cond_{B-1} \| uncond_0..uncond_{B-1}]`), bucket choice |
 | `batch_decoder.*` | slot arenas (self-attention ring caches per lane, cross-attention rows per slot) and the ggml step graph |
 | `batch_lt.*` | the ggml batched local transformer with per-row host sampling |

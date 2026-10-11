@@ -2,15 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 // MagpieBatchScheduler with a fake backend and scripted requests (no model): admission order,
 // the slot bound, eviction and slot reuse, the prefill budget, longform re-prefill on the same
-// slot, cancellation, queue-depth rejection and failure handling.
+// slot, cancellation, queue-depth rejection, failure handling and the static-batching reference
+// policy.
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstdio>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <set>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "tts/magpietts/batch/batch_scheduler.h"
@@ -322,6 +325,100 @@ main() {
         for (auto& r : results) ok += (r->calls == 1 && r->ok) ? 1 : 0;
         expect(ok == 40, "threaded: all 40 requests completed exactly once");
         expect(backend.max_rows <= 4 && !backend.duplicate_slots, "threaded: slot bound");
+        sched.stop();
+    }
+
+    // 6. Static batching (benchmark reference): a batch runs to completion before the next one is
+    //    admitted, even when a slot frees up early.
+    {
+        Log log;
+        FakeBackend backend(2);
+        tts::MagpieBatchConfig cfg;
+        cfg.max_slots = 2;
+        cfg.max_prefills_per_iter = 2;
+        cfg.static_batching = true;
+        cfg.static_batch_wait_ms = 0;  // the partial last batch starts at once (wait: test 7)
+        tts::MagpieBatchScheduler sched(backend, cfg);
+        std::vector<std::shared_ptr<FakeRequest>> reqs;
+        std::vector<std::unique_ptr<Result>> results;
+        const int lengths[5] = {3, 8, 2, 5, 4};
+        for (int i = 0; i < 5; ++i) {
+            reqs.push_back(std::make_shared<FakeRequest>("s" + std::to_string(i), std::vector<int>{lengths[i]}, log));
+            results.push_back(std::make_unique<Result>());
+            sched.submit(reqs.back(), done_into(*results.back()));
+        }
+        // a full queue forms the first batch without waiting
+        sched.runOnce();
+        expect(sched.stats().active == 2, "static: the first batch fills both slots");
+        bool s2_checked = false;
+        int admissions = 1;
+        for (int iter = 0; iter < 100 && backend.prefills < 5; ++iter) {
+            const int active_before = sched.stats().active;
+            const int p0 = backend.prefills;
+            sched.runOnce();
+            if (backend.prefills > p0) {
+                expect(active_before == 0, "static: admission only after the previous batch ended");
+                ++admissions;
+            }
+            if (!s2_checked && reqs[2]->started) {
+                expect(reqs[0]->frames_done == 3 && reqs[1]->frames_done == 8,
+                       "static: s2 waits for the whole first batch, not just a free slot");
+                s2_checked = true;
+            }
+        }
+        expect(s2_checked, "static: the second batch started");
+        sched.waitIdle();
+        for (int i = 0; i < 5; ++i) {
+            expect(results[i]->calls == 1 && results[i]->ok, "static: request " + std::to_string(i) + " completed");
+            expect(reqs[i]->frames_done == lengths[i], "static: request " + std::to_string(i) + " frame count");
+        }
+        expect(admissions == 3, "static: batches {s0,s1}, {s2,s3}, {s4}");
+        expect(sched.stats().max_active == 2 && !backend.duplicate_slots, "static: slot bound");
+    }
+
+    // 7. Static batching: a partial batch waits for the queue to fill, up to static_batch_wait_ms.
+    {
+        Log log;
+        FakeBackend backend(4);
+        tts::MagpieBatchConfig cfg;
+        cfg.max_slots = 4;
+        cfg.static_batching = true;
+        cfg.static_batch_wait_ms = 40;
+        tts::MagpieBatchScheduler sched(backend, cfg);
+        auto a = std::make_shared<FakeRequest>("a", std::vector<int>{3}, log);
+        Result ra;
+        sched.submit(a, done_into(ra));
+        sched.runOnce();
+        expect(!a->started && sched.stats().active == 0, "static: a partial batch waits for more requests");
+        std::this_thread::sleep_for(std::chrono::milliseconds(60));
+        sched.runOnce();
+        expect(a->started && sched.stats().active == 1, "static: a partial batch starts after the wait");
+        sched.waitIdle();
+        expect(ra.calls == 1 && ra.ok, "static: the partial batch completed");
+    }
+
+    // 8. Static batching through the scheduler thread.
+    {
+        Log log;
+        FakeBackend backend(4);
+        tts::MagpieBatchConfig cfg;
+        cfg.max_slots = 4;
+        cfg.static_batching = true;
+        cfg.static_batch_wait_ms = 5;
+        tts::MagpieBatchScheduler sched(backend, cfg);
+        sched.start();
+        std::vector<std::shared_ptr<FakeRequest>> reqs;
+        std::vector<std::unique_ptr<Result>> results;
+        for (int i = 0; i < 22; ++i) {
+            reqs.push_back(std::make_shared<FakeRequest>("st" + std::to_string(i), std::vector<int>{1 + (i * 5) % 11}, log));
+            results.push_back(std::make_unique<Result>());
+            sched.submit(reqs.back(), done_into(*results.back()));
+        }
+        sched.waitIdle();
+        int ok = 0;
+        for (auto& r : results) ok += (r->calls == 1 && r->ok) ? 1 : 0;
+        expect(ok == 22, "static threaded: all 22 requests completed exactly once");
+        expect(backend.max_rows <= 4 && !backend.duplicate_slots, "static threaded: slot bound");
         sched.stop();
     }
 

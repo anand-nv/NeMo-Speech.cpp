@@ -187,6 +187,7 @@ All keys nest under `tts.`. Defaults shown; CLI alias listed where one exists.
 |---|---|---|---|
 | `tts.threads` | `--threads` | `4` | CPU threads for Magpie + codec; use the dotted key with HTTP, where `--threads` controls request workers |
 | `tts.max-batch-size` | - | `1` | in-flight batching: concurrent requests that share batched decoder steps; `1` synthesizes one request at a time (see [TTS in-flight batching](../development/tts-batching.md)) |
+| `tts.static-batching` | - | `false` | benchmark reference for `tts.max-batch-size` > 1: static batching, where a new batch starts only after every request of the previous one finished decoding (bare flag: `--tts.static-batching`) |
 | `tts.codec-threads` | - | `0` | codec CPU threads; `0` = use `threads` |
 | `tts.lt-backend` | - | `auto` | local-transformer backend: `auto`/`cpu`/`cuda` |
 | `tts.lt-fp32` | `--tts.local-transformer-fp32` | `false` | run the local transformer in FP32 |
