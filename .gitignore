@@ -4,6 +4,7 @@ build-*/
 __pycache__/
 .cache/
 .deps/
+campaigns/
 core.*
 client_logs/
 .venv/
