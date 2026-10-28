@@ -26,10 +26,16 @@ target_include_directories(nemo_speech_s2s
 # The perception/RNN-T side reuses the ASR model implementation and its
 # dynamic batching infrastructure. llama.cpp supplies the Nemotron-H and
 # Gemma-3 recurrent backbones while sharing this project's patched ggml target.
+# runtime_ggml goes before llama: its GGUF loader carries a hidden copy of
+# llama.cpp's llama_file/llama_mmap. With libllama.so first on the link line,
+# those references bind to libllama's exported copy and stay undefined here, and
+# an executable that also absorbs runtime_ggml (nemo-speech) then fails to link
+# ("hidden symbol llama_file::read_raw ... is referenced by DSO").
 target_link_libraries(nemo_speech_s2s
     PUBLIC
         nemo_speech_asr
     PRIVATE
+        nemo_speech_runtime_ggml
         llama
 )
 

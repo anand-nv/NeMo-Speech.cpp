@@ -72,6 +72,11 @@ endif()
 if(NEMO_SPEECH_GGML_PATCHED)
     add_executable(test_magpietts_slot_attention test_magpietts_slot_attention.cpp)
     target_link_libraries(test_magpietts_slot_attention PRIVATE ggml)
+    # Links ggml directly, so runtime_ggml's PUBLIC CUDA::cuda_driver stub doesn't
+    # reach it; add it so libggml-cuda's NEEDED libcuda.so.1 resolves without a driver.
+    if(GGML_CUDA)
+        target_link_libraries(test_magpietts_slot_attention PRIVATE CUDA::cuda_driver)
+    endif()
     add_test(NAME magpietts_slot_attention COMMAND test_magpietts_slot_attention)
 endif()
 
