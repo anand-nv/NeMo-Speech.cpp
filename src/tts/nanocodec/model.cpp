@@ -2011,7 +2011,8 @@ NanoCodecDecoder::decodeStream(
         }
     }
     return decode_eval_stream(
-        model_->impl_->model, state.impl_->state, graph.impl_->graph, frames, threads, audio, backend);
+        model_->impl_->model, state.impl_->state, graph.impl_->graph, frames, threads, audio,
+        backend);
 }
 
 bool

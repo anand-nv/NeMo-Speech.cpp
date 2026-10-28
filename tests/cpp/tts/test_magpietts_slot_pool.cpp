@@ -44,8 +44,9 @@ main() {
     expect(cfg.lanesPerSlot() == 2 && cfg.arenaLanes() == 10, "CFG lane count");
     expect(cfg.condLane(3) == 3 && cfg.uncondLane(3) == 8, "CFG planar lanes");
     tts::MagpieLaneLayout nocfg{5, false};
-    expect(nocfg.lanesPerSlot() == 1 && nocfg.arenaLanes() == 5 && nocfg.condLane(4) == 4,
-           "no-CFG lanes");
+    expect(
+        nocfg.lanesPerSlot() == 1 && nocfg.arenaLanes() == 5 && nocfg.condLane(4) == 4,
+        "no-CFG lanes");
 
     const std::vector<int> buckets = {1, 2, 4, 8, 16};
     expect(tts::magpie_batch_bucket(buckets, 1) == 1, "bucket 1");

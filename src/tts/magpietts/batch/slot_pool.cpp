@@ -6,7 +6,8 @@
 
 namespace nemo_speech::tts {
 
-MagpieSlotPool::MagpieSlotPool(int max_slots) : held_(static_cast<size_t>(std::max(0, max_slots))) {}
+MagpieSlotPool::MagpieSlotPool(int max_slots)
+    : held_(static_cast<size_t>(std::max(0, max_slots))) {}
 
 int
 MagpieSlotPool::acquire() {

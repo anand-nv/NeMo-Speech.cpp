@@ -101,7 +101,8 @@ MagpieBatchModelBackend::init(std::string* error) {
         std::string reason;
         if (initFused(&reason)) {
             fprintf(
-                stderr, "MagpieTTS batch: fused CUDA decoder + local-transformer kernels (%d slots)\n",
+                stderr,
+                "MagpieTTS batch: fused CUDA decoder + local-transformer kernels (%d slots)\n",
                 config_.max_slots);
         } else {
             fprintf(stderr, "MagpieTTS batch: using the ggml graphs (%s)\n", reason.c_str());
@@ -135,7 +136,8 @@ MagpieBatchModelBackend::initFused(std::string* reason) {
         const magpietts_layer& L = tr.layers[i];
         magpietts_decoder_fused_layer_weights& d = layers[i];
         if (!L.self_qkv || !L.self_o || !L.norm_self || !L.norm_ff || L.ff_proj.size() != 1 ||
-            L.ff_out.size() != 1 || !L.has_cross || !L.cross_q || !L.cross_o || !L.norm_xattn_query) {
+            L.ff_out.size() != 1 || !L.has_cross || !L.cross_q || !L.cross_o ||
+            !L.norm_xattn_query) {
             return fail("unsupported decoder layout");
         }
         d.qkv = L.self_qkv->data;
@@ -155,7 +157,8 @@ MagpieBatchModelBackend::initFused(std::string* reason) {
         d.norm_ff = (const float*)L.norm_ff->data;
         d.has_cross = true;
         d.collect_alignment = layer_selected(tr.estimate_alignment_from_layers, (int)i);
-        d.apply_prior = tr.apply_attention_prior && layer_selected(tr.apply_prior_to_layers, (int)i);
+        d.apply_prior =
+            tr.apply_attention_prior && layer_selected(tr.apply_prior_to_layers, (int)i);
     }
     std::vector<const void*> emb(static_cast<size_t>(h.stacked_audio_codebooks()));
     for (int c = 0; c < h.stacked_audio_codebooks(); ++c) {
@@ -196,8 +199,8 @@ MagpieBatchModelBackend::initFused(std::string* reason) {
 
     // local transformer
     const magpietts_transformer& lt = model_.local;
-    if (model_.lt_in_w || lt.kernel != 1 || lt.norm_out || lt.layers.empty() || lt.n_embd != h.n_embd ||
-        !lt.pos_emb) {
+    if (model_.lt_in_w || lt.kernel != 1 || lt.norm_out || lt.layers.empty() ||
+        lt.n_embd != h.n_embd || !lt.pos_emb) {
         return fail("unsupported local-transformer layout");
     }
     const int rounds = h.stacked_audio_codebooks();
@@ -296,7 +299,8 @@ MagpieBatchModelBackend::initFused(std::string* reason) {
 }
 
 bool
-MagpieBatchModelBackend::prefill(int slot, const MagpieBatchRowInput& row, MagpieBatchRowOutput& out) {
+MagpieBatchModelBackend::prefill(
+    int slot, const MagpieBatchRowInput& row, MagpieBatchRowOutput& out) {
     const ggml_nvtx::range nvtx_range("magpietts_batch_backend_prefill");
     const magpietts_hparams& h = model_.hparams;
     if (row.text_len <= 0 || row.text_len > decoder_.textCapacity() ||
@@ -309,7 +313,8 @@ MagpieBatchModelBackend::prefill(int slot, const MagpieBatchRowInput& row, Magpi
     const magpietts_backend_tensor* text_device =
         row.text_cond_device && row.text_cond_device->tensor ? row.text_cond_device : nullptr;
     std::vector<std::vector<int32_t>> bos(static_cast<size_t>(h.audio_codebooks));
-    for (auto& codes : bos) codes.assign(static_cast<size_t>(h.frame_stacking_factor), h.audio_bos_id);
+    for (auto& codes : bos)
+        codes.assign(static_cast<size_t>(h.frame_stacking_factor), h.audio_bos_id);
     out.alignment.clear();
     magpietts_decoder_attention attention;
     attention.prior = row.prior;
@@ -427,7 +432,8 @@ MagpieBatchModelBackend::decode(
                     return false;
                 }
                 // the decoder graph ran asynchronously on the same backend stream
-                ggml_backend_tensor_copy_async(model_.backend, model_.backend, hidden.tensor, input);
+                ggml_backend_tensor_copy_async(
+                    model_.backend, model_.backend, hidden.tensor, input);
                 return true;
             },
             codes, argmax)) {
@@ -444,19 +450,20 @@ MagpieBatchModelBackend::decode(
 
 bool
 MagpieBatchModelBackend::sampleFused(
-    int rows, const std::vector<const MagpieBatchRowInput*>& in, std::vector<MagpieBatchRowOutput>& out,
-    bool from_prefill) {
+    int rows, const std::vector<const MagpieBatchRowInput*>& in,
+    std::vector<MagpieBatchRowOutput>& out, bool from_prefill) {
 #if defined(MAGPIETTS_CUDA_SAMPLING)
     Fused& f = *fused_;
     const int n_cb = f.n_cb;
     if (from_prefill) {
         // prefill: the first frame's hidden states come from the prefill scratch
         const size_t bytes = (size_t)f.E * sizeof(float);
-        if (cudaMemcpyAsync(f.hidden, hidden_cond_.tensor->data, bytes, cudaMemcpyDeviceToDevice, f.stream) !=
+        if (cudaMemcpyAsync(
+                f.hidden, hidden_cond_.tensor->data, bytes, cudaMemcpyDeviceToDevice, f.stream) !=
                 cudaSuccess ||
-            (config_.use_cfg &&
-             cudaMemcpyAsync(f.hidden + f.E, hidden_uncond_.tensor->data, bytes, cudaMemcpyDeviceToDevice,
-                             f.stream) != cudaSuccess)) {
+            (config_.use_cfg && cudaMemcpyAsync(
+                                    f.hidden + f.E, hidden_uncond_.tensor->data, bytes,
+                                    cudaMemcpyDeviceToDevice, f.stream) != cudaSuccess)) {
             return false;
         }
     }
@@ -467,8 +474,9 @@ MagpieBatchModelBackend::sampleFused(
             r.forbid_eos, r.seed, r.frame_index);
     }
     const size_t cfg_bytes = (size_t)rows * magpietts_batch_fused_config_size();
-    if (cudaMemcpyAsync(f.d_in + f.off_configs, f.h_in + f.off_configs, cfg_bytes, cudaMemcpyHostToDevice,
-                        f.stream) != cudaSuccess) {
+    if (cudaMemcpyAsync(
+            f.d_in + f.off_configs, f.h_in + f.off_configs, cfg_bytes, cudaMemcpyHostToDevice,
+            f.stream) != cudaSuccess) {
         return false;
     }
     magpietts_batch_lt_fused_args la{};
@@ -486,9 +494,11 @@ MagpieBatchModelBackend::sampleFused(
         return false;
     }
     const size_t code_bytes = (size_t)rows * n_cb * sizeof(int32_t);
-    if (cudaMemcpyAsync(f.h_out, f.d_out, code_bytes, cudaMemcpyDeviceToHost, f.stream) != cudaSuccess ||
-        cudaMemcpyAsync(f.h_out + f.off_argmax, f.d_out + f.off_argmax, code_bytes, cudaMemcpyDeviceToHost,
-                        f.stream) != cudaSuccess ||
+    if (cudaMemcpyAsync(f.h_out, f.d_out, code_bytes, cudaMemcpyDeviceToHost, f.stream) !=
+            cudaSuccess ||
+        cudaMemcpyAsync(
+            f.h_out + f.off_argmax, f.d_out + f.off_argmax, code_bytes, cudaMemcpyDeviceToHost,
+            f.stream) != cudaSuccess ||
         cudaStreamSynchronize(f.stream) != cudaSuccess) {
         return false;
     }
@@ -567,7 +577,8 @@ MagpieBatchModelBackend::decodeFused(
             f.h_in + f.off_configs, b, config_.use_cfg, r.cfg_scale, r.temperature, r.top_k,
             r.forbid_eos, r.seed, r.frame_index);
     }
-    if (cudaMemcpyAsync(f.d_in, f.h_in, f.in_bytes, cudaMemcpyHostToDevice, f.stream) != cudaSuccess) {
+    if (cudaMemcpyAsync(f.d_in, f.h_in, f.in_bytes, cudaMemcpyHostToDevice, f.stream) !=
+        cudaSuccess) {
         return false;
     }
     magpietts_batch_decoder_fused_step_args st{};
@@ -590,8 +601,9 @@ MagpieBatchModelBackend::decodeFused(
         return false;
     }
     if (any_alignment &&
-        cudaMemcpyAsync(f.h_out + f.off_align, f.d_out + f.off_align, (size_t)B * TC * sizeof(float),
-                        cudaMemcpyDeviceToHost, f.stream) != cudaSuccess) {
+        cudaMemcpyAsync(
+            f.h_out + f.off_align, f.d_out + f.off_align, (size_t)B * TC * sizeof(float),
+            cudaMemcpyDeviceToHost, f.stream) != cudaSuccess) {
         return false;
     }
     // sampleFused uploads the configs again (already current) and reads the codes back

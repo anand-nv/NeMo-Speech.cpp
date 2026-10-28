@@ -195,7 +195,9 @@ main(int argc, char** argv) {
         tts::magpie_stream_params p;
         p.seed = 1;
         p.use_cfg = use_cfg;
-        if (!engine.synthesize(p, jobs[0]->chunks, [](const std::vector<uint8_t>&) { return true; }, m, "warmup", &error)) {
+        if (!engine.synthesize(
+                p, jobs[0]->chunks, [](const std::vector<uint8_t>&) { return true; }, m, "warmup",
+                &error)) {
             std::fprintf(stderr, "FAIL: warm-up request: %s\n", error.c_str());
             return 1;
         }
@@ -410,8 +412,7 @@ main(int argc, char** argv) {
         std::printf(
             "stress: %zu requests, %d cancel targets, %d ok, %d unexpected failures; "
             "engine: completed=%llu cancelled=%llu failed=%llu active=%d queued=%d max_active=%d\n",
-            sj.size(), targets, ok, bad,
-            (unsigned long long)(after.completed - before.completed),
+            sj.size(), targets, ok, bad, (unsigned long long)(after.completed - before.completed),
             (unsigned long long)(after.cancelled - before.cancelled),
             (unsigned long long)(after.failed - before.failed), after.active, after.queued,
             after.max_active);

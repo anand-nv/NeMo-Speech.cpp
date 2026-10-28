@@ -45,8 +45,7 @@ class MagpieBatchDecoder::Module final : public ggml_runtime::Module {
         : model_(model), layout_(layout), cache_len_(cache_len), text_capacity_(text_capacity) {
         const magpietts_transformer& tr = model_.decoder;
         for (int il = 0; il < static_cast<int>(tr.layers.size()); ++il) {
-            if (tr.layers[il].has_cross &&
-                layer_selected(tr.estimate_alignment_from_layers, il)) {
+            if (tr.layers[il].has_cross && layer_selected(tr.estimate_alignment_from_layers, il)) {
                 ++alignment_layers_;
             }
         }
@@ -123,8 +122,8 @@ class MagpieBatchDecoder::Module final : public ggml_runtime::Module {
         // Input embedding: mean of the stacked codebook embeddings plus the position.
         ggml_tensor* audio = nullptr;
         for (int c = 0; c < h.stacked_audio_codebooks(); ++c) {
-            ggml_tensor* ids = ggml_view_1d(
-                ctx, tokens.tensor, B, static_cast<size_t>(c) * B * sizeof(int32_t));
+            ggml_tensor* ids =
+                ggml_view_1d(ctx, tokens.tensor, B, static_cast<size_t>(c) * B * sizeof(int32_t));
             ggml_tensor* emb = ggml_get_rows(ctx, model_.audio_embeddings[c], ids);
             audio = audio ? ggml_add(ctx, audio, emb) : emb;
         }
@@ -165,8 +164,7 @@ class MagpieBatchDecoder::Module final : public ggml_runtime::Module {
             ggml_tensor* heads = nullptr;
             throw std::runtime_error("the batched Magpie decoder requires patched ggml");
 #endif
-            ggml_tensor* merged =
-                ggml_reshape_2d(ctx, ggml_permute(ctx, heads, 0, 2, 1, 3), E, L);
+            ggml_tensor* merged = ggml_reshape_2d(ctx, ggml_permute(ctx, heads, 0, 2, 1, 3), E, L);
             x = ggml_add(ctx, residual, linear(ctx, layer.self_o, merged));
 
             if (tr.has_cross && layer.has_cross) {
@@ -182,16 +180,16 @@ class MagpieBatchDecoder::Module final : public ggml_runtime::Module {
                     ctx, ggml_reshape_4d(ctx, query, cd_head, c_heads, 1, B), 0, 2, 1, 3);
                 auto gather = [&](ggml_tensor* arena_plane) {
                     ggml_tensor* layer_rows = ggml_view_2d(
-                        ctx, arena_plane, cross_dim * TC, layout_.arena_slots,
-                        arena_plane->nb[2], static_cast<size_t>(il) * arena_plane->nb[1]);
+                        ctx, arena_plane, cross_dim * TC, layout_.arena_slots, arena_plane->nb[2],
+                        static_cast<size_t>(il) * arena_plane->nb[1]);
                     return ggml_get_rows(ctx, layer_rows, cross_slots.tensor);  // [CD*TC, B]
                 };
                 ggml_tensor* kh = ggml_permute(
                     ctx, ggml_reshape_4d(ctx, gather(cross_k), cd_head, c_heads, TC, B), 0, 2, 1,
-                    3);  // [d, TC, H, B]
+                    3);                                           // [d, TC, H, B]
                 ggml_tensor* scores = ggml_mul_mat(ctx, kh, qh);  // [TC, 1, H, B]
-                const bool apply_prior = tr.apply_attention_prior &&
-                                         layer_selected(tr.apply_prior_to_layers, il);
+                const bool apply_prior =
+                    tr.apply_attention_prior && layer_selected(tr.apply_prior_to_layers, il);
                 ggml_tensor* probs = ggml_soft_max_ext(
                     ctx, scores, apply_prior ? prior_bias : mask_bias,
                     1.0f / std::sqrt(static_cast<float>(cd_head)), 0.0f);
@@ -201,18 +199,19 @@ class MagpieBatchDecoder::Module final : public ggml_runtime::Module {
                             ? ggml_reshape_2d(ctx, probs, TC, B)
                             : ggml_reshape_2d(
                                   ctx,
-                                  ggml_sum_rows(ctx, ggml_cont(ctx, ggml_permute(ctx, probs, 1, 2, 0, 3))),
+                                  ggml_sum_rows(
+                                      ctx, ggml_cont(ctx, ggml_permute(ctx, probs, 1, 2, 0, 3))),
                                   TC, B);
-                    alignment_sum = alignment_sum ? ggml_add(ctx, alignment_sum, per_layer)
-                                                  : per_layer;
+                    alignment_sum =
+                        alignment_sum ? ggml_add(ctx, alignment_sum, per_layer) : per_layer;
                 }
                 ggml_tensor* vt = ggml_cont(
                     ctx, ggml_permute(
-                             ctx, ggml_reshape_4d(ctx, gather(cross_v), cd_head, c_heads, TC, B),
-                             1, 2, 0, 3));                     // [TC, d, H, B]
+                             ctx, ggml_reshape_4d(ctx, gather(cross_v), cd_head, c_heads, TC, B), 1,
+                             2, 0, 3));                                 // [TC, d, H, B]
                 ggml_tensor* ctx_heads = ggml_mul_mat(ctx, vt, probs);  // [d, 1, H, B]
-                ggml_tensor* attended = ggml_cont_2d(
-                    ctx, ggml_permute(ctx, ctx_heads, 0, 2, 1, 3), cross_dim, B);
+                ggml_tensor* attended =
+                    ggml_cont_2d(ctx, ggml_permute(ctx, ctx_heads, 0, 2, 1, 3), cross_dim, B);
                 cond = ggml_add(ctx, cond, linear(ctx, layer.cross_o, attended));
                 x = uncond ? ggml_concat(ctx, cond, uncond, 1) : cond;
             }
@@ -261,7 +260,8 @@ class MagpieBatchDecoder::Module final : public ggml_runtime::Module {
     int alignment_layers_ = 0;
 };
 
-MagpieBatchDecoder::MagpieBatchDecoder(const magpietts_model& model, const MagpieBatchConfig& config)
+MagpieBatchDecoder::MagpieBatchDecoder(
+    const magpietts_model& model, const MagpieBatchConfig& config)
     : model_(model), config_(config) {}
 
 MagpieBatchDecoder::~MagpieBatchDecoder() = default;
@@ -305,16 +305,16 @@ MagpieBatchDecoder::init(std::string* error) {
     layout_.use_cfg = config_.use_cfg;
     buckets_ = config_.buckets;
     std::sort(buckets_.begin(), buckets_.end());
-    buckets_.erase(std::remove_if(buckets_.begin(), buckets_.end(), [](int b) { return b < 1; }),
-                   buckets_.end());
+    buckets_.erase(
+        std::remove_if(buckets_.begin(), buckets_.end(), [](int b) { return b < 1; }),
+        buckets_.end());
     buckets_.erase(std::unique(buckets_.begin(), buckets_.end()), buckets_.end());
     if (buckets_.empty() || buckets_.back() < config_.max_slots) {
         buckets_.push_back(config_.max_slots);
     }
     const int stacking = std::max(1, static_cast<int>(h.frame_stacking_factor));
-    const int steps = config_.max_decoder_positions > 0
-                          ? config_.max_decoder_positions * stacking
-                          : h.max_decoder_steps;
+    const int steps = config_.max_decoder_positions > 0 ? config_.max_decoder_positions * stacking
+                                                        : h.max_decoder_steps;
     max_positions_ = (steps + stacking - 1) / stacking;
     // The prefill holds the baked context plus the BOS frame; every step appends one row and
     // the last step's row is never attended (the request ends after it).
@@ -333,10 +333,12 @@ MagpieBatchDecoder::init(std::string* error) {
     params.use_gpu = gpu;
     params.n_threads = std::max(1, config_.threads);
     try {
-        backend_manager_ = gpu ? std::make_unique<ggml_runtime::BackendManager>(params, model_.backend)
-                               : std::make_unique<ggml_runtime::BackendManager>(params);
+        backend_manager_ =
+            gpu ? std::make_unique<ggml_runtime::BackendManager>(params, model_.backend)
+                : std::make_unique<ggml_runtime::BackendManager>(params);
         module_ = std::make_unique<Module>(model_, layout_, cache_len_, text_capacity_);
-        session_ = std::make_unique<ggml_runtime::Session>(*backend_manager_, module_.get(), nullptr);
+        session_ =
+            std::make_unique<ggml_runtime::Session>(*backend_manager_, module_.get(), nullptr);
         session_->set_run_cache_capacity(buckets_.size() + 1);
         session_->setup();
     }
@@ -362,12 +364,14 @@ MagpieBatchDecoder::selfArena(int layer) const {
 
 float*
 MagpieBatchDecoder::crossK() const {
-    return static_cast<float*>(session_->model_tensor_container->get_tensor_by_name(kCrossK).tensor->data);
+    return static_cast<float*>(
+        session_->model_tensor_container->get_tensor_by_name(kCrossK).tensor->data);
 }
 
 float*
 MagpieBatchDecoder::crossV() const {
-    return static_cast<float*>(session_->model_tensor_container->get_tensor_by_name(kCrossV).tensor->data);
+    return static_cast<float*>(
+        session_->model_tensor_container->get_tensor_by_name(kCrossV).tensor->data);
 }
 
 bool
@@ -378,7 +382,8 @@ MagpieBatchDecoder::seedSlot(int slot, const DecoderKvCache& cond, const Decoder
     const int n = cond.n_tokens;
     if (n <= 0 || n > cache_len_ || cond.n_embd != model_.hparams.n_embd ||
         cond.n_layers != model_.hparams.n_dec_layer ||
-        (layout_.use_cfg && (!uncond || uncond->n_tokens != n || uncond->n_layers != cond.n_layers))) {
+        (layout_.use_cfg &&
+         (!uncond || uncond->n_tokens != n || uncond->n_layers != cond.n_layers))) {
         fprintf(stderr, "batched decoder: incompatible prefill caches for slot %d\n", slot);
         return false;
     }
@@ -400,12 +405,14 @@ MagpieBatchDecoder::seedSlot(int slot, const DecoderKvCache& cond, const Decoder
                 continue;
             }
             for (int plane = 0; plane < 2; ++plane) {
-                ggml_tensor* src_base = plane == 0 ? sources[lane]->memory_k : sources[lane]->memory_v;
-                ggml_tensor* src =
-                    ggml_view_1d(ctx, src_base, static_cast<int64_t>(rows), layer * src_layer_bytes);
+                ggml_tensor* src_base =
+                    plane == 0 ? sources[lane]->memory_k : sources[lane]->memory_v;
+                ggml_tensor* src = ggml_view_1d(
+                    ctx, src_base, static_cast<int64_t>(rows), layer * src_layer_bytes);
                 ggml_tensor* dst = ggml_view_1d(
                     ctx, arena, static_cast<int64_t>(rows),
-                    plane * arena->nb[2] + static_cast<size_t>(lanes[lane]) * arena->nb[1] + dst_row0);
+                    plane * arena->nb[2] + static_cast<size_t>(lanes[lane]) * arena->nb[1] +
+                        dst_row0);
                 ggml_backend_view_init(src);
                 ggml_backend_view_init(dst);
                 ggml_backend_tensor_copy(src, dst);
@@ -424,7 +431,9 @@ bool
 MagpieBatchDecoder::setSlotCross(int slot, const DecoderCrossKvCache& cross, int text_len) {
     if (!session_ || slot < 0 || slot >= dummySlot() || !cross.memory_k || !cross.memory_v ||
         text_len <= 0 || text_len > text_capacity_ || text_len > cross.text_len) {
-        fprintf(stderr, "batched decoder: invalid cross cache for slot %d (text_len %d)\n", slot, text_len);
+        fprintf(
+            stderr, "batched decoder: invalid cross cache for slot %d (text_len %d)\n", slot,
+            text_len);
         return false;
     }
     const int64_t cross_dim = cross.n_cross_dim;
@@ -442,7 +451,8 @@ MagpieBatchDecoder::setSlotCross(int slot, const DecoderCrossKvCache& cross, int
                 static_cast<size_t>(layer) * stride * cross_dim * f);
             ggml_tensor* dst = ggml_view_1d(
                 ctx, arena, cross_dim * text_len,
-                static_cast<size_t>(slot) * arena->nb[2] + static_cast<size_t>(layer) * arena->nb[1]);
+                static_cast<size_t>(slot) * arena->nb[2] +
+                    static_cast<size_t>(layer) * arena->nb[1]);
             ggml_backend_view_init(src);
             ggml_backend_view_init(dst);
             ggml_backend_tensor_copy(src, dst);
@@ -462,7 +472,9 @@ MagpieBatchDecoder::releaseSlot(int slot) {
 
 int
 MagpieBatchDecoder::slotTokens(int slot) const {
-    return slot >= 0 && slot < static_cast<int>(slots_.size()) ? slots_[static_cast<size_t>(slot)].n_tokens : 0;
+    return slot >= 0 && slot < static_cast<int>(slots_.size())
+               ? slots_[static_cast<size_t>(slot)].n_tokens
+               : 0;
 }
 
 int

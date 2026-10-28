@@ -56,8 +56,8 @@ struct MagpieBatchRowInput {
 
 // What a step produced for a request.
 struct MagpieBatchRowOutput {
-    std::vector<int32_t> codes;   // sampled stacked codes
-    std::vector<int32_t> argmax;  // greedy stacked codes
+    std::vector<int32_t> codes;    // sampled stacked codes
+    std::vector<int32_t> argmax;   // greedy stacked codes
     std::vector<float> alignment;  // when collected: mean cross-attention over the text rows
 };
 

@@ -79,7 +79,8 @@ make_inputs(const Case& c) {
 size_t
 arena_index(const Case& c, int d, int head, int row, int slot, int plane) {
     return static_cast<size_t>(d) + static_cast<size_t>(kHeadDim) * head +
-           static_cast<size_t>(kFeatures) * row + static_cast<size_t>(kFeatures) * c.cache_len * slot +
+           static_cast<size_t>(kFeatures) * row +
+           static_cast<size_t>(kFeatures) * c.cache_len * slot +
            static_cast<size_t>(kFeatures) * c.cache_len * c.slots * plane;
 }
 
@@ -106,10 +107,10 @@ reference(const Case& c, const Inputs& in) {
             for (int j = begin; j < kv; ++j) {
                 double acc = 0.0;
                 for (int d = 0; d < kHeadDim; ++d) {
-                    const float key = j == c.cache_len
-                                          ? in.k[lane_index(d, h, l)]
-                                          : in.cache[arena_index(
-                                                c, d, h, (ring + j) % c.cache_len, slot, 0)];
+                    const float key =
+                        j == c.cache_len
+                            ? in.k[lane_index(d, h, l)]
+                            : in.cache[arena_index(c, d, h, (ring + j) % c.cache_len, slot, 0)];
                     acc += static_cast<double>(in.q[lane_index(d, h, l)]) * key;
                 }
                 acc = acc * scale + (c.mask ? in.mask[static_cast<size_t>(l) * kv + j] : 0.0f);
@@ -121,10 +122,10 @@ reference(const Case& c, const Inputs& in) {
             for (int d = 0; d < kHeadDim; ++d) {
                 double acc = 0.0;
                 for (int j = begin; j < kv; ++j) {
-                    const float val = j == c.cache_len
-                                          ? in.v[lane_index(d, h, l)]
-                                          : in.cache[arena_index(
-                                                c, d, h, (ring + j) % c.cache_len, slot, 1)];
+                    const float val =
+                        j == c.cache_len
+                            ? in.v[lane_index(d, h, l)]
+                            : in.cache[arena_index(c, d, h, (ring + j) % c.cache_len, slot, 1)];
                     acc += s[j] * val;
                 }
                 r.out[lane_index(d, h, l)] = static_cast<float>(acc / sum);
@@ -204,8 +205,8 @@ main() {
         std::printf("no GPU backend: checking the CPU forward only\n");
 
     const std::vector<Case> cases = {
-        {1, 1, 18, false, 1},   {2, 3, 18, false, 2},  {4, 9, 37, true, 3},
-        {8, 17, 64, true, 4},   {16, 33, 111, true, 5}, {32, 33, 130, true, 6},
+        {1, 1, 18, false, 1},    {2, 3, 18, false, 2},   {4, 9, 37, true, 3},
+        {8, 17, 64, true, 4},    {16, 33, 111, true, 5}, {32, 33, 130, true, 6},
         {16, 20, 611, false, 7},
     };
     int failures = 0;
@@ -221,8 +222,8 @@ main() {
         const float e_out = max_diff(got_cpu.out, ref.out);
         const bool cache_ok = got_cpu.cache == ref.cache;
         std::printf(
-            "lanes=%2d slots=%2d cache=%3d mask=%d  cpu-vs-ref out=%.3g cache=%s", c.lanes,
-            c.slots, c.cache_len, c.mask ? 1 : 0, e_out, cache_ok ? "exact" : "MISMATCH");
+            "lanes=%2d slots=%2d cache=%3d mask=%d  cpu-vs-ref out=%.3g cache=%s", c.lanes, c.slots,
+            c.cache_len, c.mask ? 1 : 0, e_out, cache_ok ? "exact" : "MISMATCH");
         if (e_out > 2e-5f || !cache_ok)
             ++failures;
         if (gpu) {

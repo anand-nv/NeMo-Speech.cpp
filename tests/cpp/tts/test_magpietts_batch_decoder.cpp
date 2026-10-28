@@ -123,7 +123,8 @@ main(int argc, char** argv) {
     if (tts::magpietts_backend_is_cuda(model.backend) && !model.decoder.layers.empty() &&
         model.decoder.layers[0].self_qkv->type == GGML_TYPE_Q8_0 && tol < 3.0e-2f) {
         tol = 3.0e-2f;
-        std::printf("serial reference uses the int8-activation fused kernel: tolerance %.3g\n", tol);
+        std::printf(
+            "serial reference uses the int8-activation fused kernel: tolerance %.3g\n", tol);
     }
     const tts::magpietts_hparams& h = model.hparams;
     const int threads = 8;
@@ -167,7 +168,8 @@ main(int argc, char** argv) {
         tts::DecoderCrossKvCache cross;
         const int text_len = static_cast<int>(p.tokens.size());
         std::vector<std::vector<int32_t>> audio(static_cast<size_t>(h.audio_codebooks));
-        for (auto& c : audio) c.assign(static_cast<size_t>(h.frame_stacking_factor), h.audio_bos_id);
+        for (auto& c : audio)
+            c.assign(static_cast<size_t>(h.frame_stacking_factor), h.audio_bos_id);
         for (int s = 0; s < steps; ++s) {
             tts::decoder_result rc, ru;
             rc.logits_required = ru.logits_required = false;
@@ -219,7 +221,8 @@ main(int argc, char** argv) {
                 tts::DecoderKvCache cond_kv, uncond_kv;
                 tts::DecoderCrossKvCache cross;
                 std::vector<std::vector<int32_t>> bos(static_cast<size_t>(h.audio_codebooks));
-                for (auto& c : bos) c.assign(static_cast<size_t>(h.frame_stacking_factor), h.audio_bos_id);
+                for (auto& c : bos)
+                    c.assign(static_cast<size_t>(h.frame_stacking_factor), h.audio_bos_id);
                 std::vector<float> prior = prior_for(0, text_len);
                 std::vector<float> align;
                 tts::magpietts_decoder_attention att;
@@ -233,10 +236,10 @@ main(int argc, char** argv) {
                     std::fprintf(stderr, "FAIL: prefill/seed prompt %zu\n", i);
                     return 1;
                 }
-                const float ec =
-                    max_abs_diff(read_hidden(hc).data(), p.ref_cond[0].data(), static_cast<size_t>(E));
-                const float eu =
-                    max_abs_diff(read_hidden(hu).data(), p.ref_uncond[0].data(), static_cast<size_t>(E));
+                const float ec = max_abs_diff(
+                    read_hidden(hc).data(), p.ref_cond[0].data(), static_cast<size_t>(E));
+                const float eu = max_abs_diff(
+                    read_hidden(hu).data(), p.ref_uncond[0].data(), static_cast<size_t>(E));
                 const float e = std::max(ec, eu);
                 if (std::getenv("BATCH_DECODER_TEST_VERBOSE"))
                     std::printf("  prefill prompt=%zu cond=%.3g uncond=%.3g\n", i, ec, eu);
@@ -259,7 +262,8 @@ main(int argc, char** argv) {
         }
         if (rows.empty())
             continue;
-        const int bucket = tts::magpie_batch_bucket(batch.buckets(), static_cast<int>(rows.size()) + 1);
+        const int bucket =
+            tts::magpie_batch_bucket(batch.buckets(), static_cast<int>(rows.size()) + 1);
         ggml_runtime::DeviceTensor hidden;
         std::vector<std::vector<float>> align;
         if (!batch.step(rows, bucket, hidden, align)) {
@@ -274,8 +278,12 @@ main(int argc, char** argv) {
             const float* cond = host.data() + r * E;
             const float* uncond = host.data() + (static_cast<size_t>(bucket) + r) * E;
             const float e = std::max(
-                max_abs_diff(cond, prompts[i].ref_cond[static_cast<size_t>(s)].data(), static_cast<size_t>(E)),
-                max_abs_diff(uncond, prompts[i].ref_uncond[static_cast<size_t>(s)].data(), static_cast<size_t>(E)));
+                max_abs_diff(
+                    cond, prompts[i].ref_cond[static_cast<size_t>(s)].data(),
+                    static_cast<size_t>(E)),
+                max_abs_diff(
+                    uncond, prompts[i].ref_uncond[static_cast<size_t>(s)].data(),
+                    static_cast<size_t>(E)));
             const auto& ref_align = prompts[i].ref_align[static_cast<size_t>(s)];
             float ea = 0.0f;
             if (ref_align.size() != align[r].size())
@@ -286,8 +294,8 @@ main(int argc, char** argv) {
             worst_align = std::max(worst_align, ea);
             if (std::getenv("BATCH_DECODER_TEST_VERBOSE"))
                 std::printf(
-                    "  t=%d prompt=%zu slot=%d step=%d rows=%zu bucket=%d hidden=%.3g align=%.3g\n", t,
-                    i, rows[r].slot, s, rows.size(), bucket, e, ea);
+                    "  t=%d prompt=%zu slot=%d step=%d rows=%zu bucket=%d hidden=%.3g align=%.3g\n",
+                    t, i, rows[r].slot, s, rows.size(), bucket, e, ea);
             ++checked;
             ++local_step[i];
         }

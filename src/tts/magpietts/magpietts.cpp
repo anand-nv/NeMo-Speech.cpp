@@ -3,8 +3,8 @@
 #include "magpietts.h"
 
 #include <algorithm>
-#include <atomic>
 #include <array>
+#include <atomic>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
@@ -1164,9 +1164,8 @@ class MagpieRequestRunner {
         const char* run_label, bool write_codes)
         : magpie_(magpie), codec_(codec), workspace_(workspace), buffers_(buffers),
           codec_ctx_(codec_ctx), codec_mutex_(codec_mutex), codec_backend_(codec_backend),
-          params_(params), outputs_(outputs),
-          metrics_(metrics), label_(run_label ? run_label : "stream"), write_codes_(write_codes),
-          engine_mode_(true) {}
+          params_(params), outputs_(outputs), metrics_(metrics),
+          label_(run_label ? run_label : "stream"), write_codes_(write_codes), engine_mode_(true) {}
 
     ~MagpieRequestRunner() {
         // Every failure path after start() already cancelled or joined the codec worker; this only
@@ -1189,8 +1188,7 @@ class MagpieRequestRunner {
         metrics_.decoder.begin(t_start_);
         {
             const ggml_nvtx::range nvtx_loop("magpietts_stream_generation_loop");
-            for (size_t chunk_index = 0; chunk_index < state_.token_chunks.size();
-                 ++chunk_index) {
+            for (size_t chunk_index = 0; chunk_index < state_.token_chunks.size(); ++chunk_index) {
                 if (state_.token_chunks[chunk_index].empty()) {
                     continue;
                 }
@@ -1234,8 +1232,9 @@ class MagpieRequestRunner {
         limits_ = limits;
         const magpietts_hparams& h = state_.h;
         if (params_.use_cfg != limits.use_cfg) {
-            return fail(limits.use_cfg ? "the batching engine runs CFG; the request disables it"
-                                       : "the batching engine runs without CFG; the request uses it");
+            return fail(
+                limits.use_cfg ? "the batching engine runs CFG; the request disables it"
+                               : "the batching engine runs without CFG; the request uses it");
         }
         if (!params_.use_local_transformer) {
             return fail("the batching engine needs the local transformer");
@@ -1253,7 +1252,8 @@ class MagpieRequestRunner {
         for (const auto& chunk : state_.token_chunks) {
             const int cur = (int)chunk.size();
             const int hist = std::min<int>(
-                {(int)std::min<size_t>(seen, (size_t)1 << 30), cur, 20, std::max(0, h.n_ctx - cur)});
+                {(int)std::min<size_t>(seen, (size_t)1 << 30), cur, 20,
+                 std::max(0, h.n_ctx - cur)});
             max_window = std::max(max_window, hist + cur);
             seen += chunk.size();
         }
@@ -1380,7 +1380,6 @@ class MagpieRequestRunner {
     const MagpieRequestState& state() const { return state_; }
 
    private:
-
     bool cancelWorker() {
         codec_worker_->cancel();
         return false;
@@ -1459,10 +1458,9 @@ class MagpieRequestRunner {
         }
         const char* local_transformer_effective =
             params.use_local_transformer ? (state_.use_cuda_lt ? "cuda" : "cpu") : "off";
-        state_.codec_fps =
-            codec_.samplesPerFrame() > 0
-                ? (double)codec_.sampleRate() / (double)codec_.samplesPerFrame()
-                : 0.0;
+        state_.codec_fps = codec_.samplesPerFrame() > 0
+                               ? (double)codec_.sampleRate() / (double)codec_.samplesPerFrame()
+                               : 0.0;
         state_.window_samples = (int)((int64_t)codec_.sampleRate() * params.window_ms / 1000);
         logit_dump_path_ = std::getenv("MAGPIETTS_LOGIT_DUMP");
         const char* forced_codes_path = std::getenv("MAGPIETTS_FORCE_CODES");
@@ -1526,10 +1524,10 @@ class MagpieRequestRunner {
 
         codec_worker_ = std::make_unique<codec_stream_worker>(
             codec_, workspace_.codec_decoder, codec_ctx_.state, codec_ctx_.graphs,
-            params.codec_threads, outputs_,
-            codec_.samplesPerFrame(), params.chunk_frames, params.codec_history_frames,
-            params.codec_future_frames, state_.window_samples, (size_t)params.codec_queue_depth,
-            params.use_stateful_codec, &metrics_, label_, params.verbose);
+            params.codec_threads, outputs_, codec_.samplesPerFrame(), params.chunk_frames,
+            params.codec_history_frames, params.codec_future_frames, state_.window_samples,
+            (size_t)params.codec_queue_depth, params.use_stateful_codec, &metrics_, label_,
+            params.verbose);
         codec_worker_->start();
         if (params.verbose) {
             fprintf(
@@ -1537,11 +1535,10 @@ class MagpieRequestRunner {
                 label_, params.use_stateful_codec ? "fast stateful" : "rolling-window");
         }
 
-        state_.prefetch_enabled = state_.longform_active && state_.use_cuda_sampling &&
-                                  params.use_local_transformer && params.use_cfg &&
-                                  params.use_kv_cache && h.dec_kernel == 1 &&
-                                  state_.token_chunks.size() > 1 &&
-                                  workspace_.ensurePrefetchBackend();
+        state_.prefetch_enabled =
+            state_.longform_active && state_.use_cuda_sampling && params.use_local_transformer &&
+            params.use_cfg && params.use_kv_cache && h.dec_kernel == 1 &&
+            state_.token_chunks.size() > 1 && workspace_.ensurePrefetchBackend();
         state_.prefetch_max_window = 0;
         if (state_.longform_active && params.use_kv_cache) {
             // Size the cross caches once for the widest text window so the persistent decoder
@@ -1621,64 +1618,62 @@ class MagpieRequestRunner {
         const int speaker = params_.speaker;
         const int threads = params_.threads;
         const int prefetch_max_window = state_.prefetch_max_window;
-        chunk_prefetch.thread =
-            std::thread([this, window, history_context, history_context_len, current_len,
-                         text_len, speaker, threads, prefetch_max_window]() {
-                const ggml_nvtx::range nvtx_range("magpietts_stream_chunk_prefetch");
-                const magpietts_hparams& h = state_.h;
-                MagpieChunkPrefetch& chunk_prefetch = state_.chunk_prefetch;
-                MagpieStreamingWorkspace& ws = workspace_;
-                MagpieRequestBuffers& buf = buffers_;
-                magpietts_model& magpie = magpie_;
-                // pinned staging sized once for the widest window (cudaMallocHost holds the
-                // driver lock)
-                buf.prefetch_staging.reserve(
-                    magpie, (size_t)h.n_embd * (size_t)std::max(text_len, prefetch_max_window) *
-                                sizeof(float));
-                if (!ws.encoder.evalDevice(
-                        window, threads, buf.prefetch_text_cond_device, ws.prefetch_backend,
-                        &ws.prefetch_encoder_allocr)) {
-                    return;
-                }
-                std::vector<float>& cond = chunk_prefetch.text_cond;
-                cond.resize((size_t)h.n_embd * (size_t)text_len);
-                magpietts_backend_tensor_get_staged(
-                    magpie, buf.prefetch_staging, buf.prefetch_text_cond_device.tensor,
-                    cond.data(), 0, cond.size() * sizeof(float));
-                if (!splice_longform_history_context(
-                        cond, text_len, current_len, h.n_embd, history_context,
-                        history_context_len)) {
-                    return;
-                }
-                if (text_len > current_len) {
-                    magpietts_backend_tensor_set_staged(
-                        magpie, buf.prefetch_staging, buf.prefetch_text_cond_device.tensor,
-                        cond.data(), 0, cond.size() * sizeof(float));
-                }
-                if (!buf.prefetch_cond_hidden.alloc2d(
-                        magpie, GGML_TYPE_F32, h.n_embd, 1, "prefetch_hidden_cond") ||
-                    !buf.prefetch_uncond_hidden.alloc2d(
-                        magpie, GGML_TYPE_F32, h.n_embd, 1, "prefetch_hidden_uncond")) {
-                    return;
-                }
-                std::vector<std::vector<int32_t>> bos_codes((size_t)h.audio_codebooks);
-                for (auto& codes : bos_codes) {
-                    codes.assign((size_t)h.frame_stacking_factor, h.audio_bos_id);
-                }
-                magpietts_decoder_attention attention;
-                attention.prior = chunk_prefetch.prior.empty() ? nullptr : &chunk_prefetch.prior;
-                attention.alignment_scores =
-                    chunk_prefetch.collect_alignment ? &chunk_prefetch.alignment : nullptr;
-                buf.prefetch_cross_kv.clear();
-                chunk_prefetch.ok = ws.decoder.prefillPair(
-                    cond, text_len, bos_codes, speaker, threads, buf.prefetch_cond_kv,
-                    buf.prefetch_uncond_kv, &buf.prefetch_text_cond_device,
-                    &buf.prefetch_cond_hidden, &buf.prefetch_uncond_hidden,
-                    &buf.prefetch_cross_kv,
-                    (attention.prior || attention.alignment_scores) ? &attention : nullptr,
-                    buf.prefetch_staging, ws.prefetch_backend, &ws.prefetch_prefill_allocr,
-                    &ws.prefetch_cross_allocr);
-            });
+        chunk_prefetch.thread = std::thread([this, window, history_context, history_context_len,
+                                             current_len, text_len, speaker, threads,
+                                             prefetch_max_window]() {
+            const ggml_nvtx::range nvtx_range("magpietts_stream_chunk_prefetch");
+            const magpietts_hparams& h = state_.h;
+            MagpieChunkPrefetch& chunk_prefetch = state_.chunk_prefetch;
+            MagpieStreamingWorkspace& ws = workspace_;
+            MagpieRequestBuffers& buf = buffers_;
+            magpietts_model& magpie = magpie_;
+            // pinned staging sized once for the widest window (cudaMallocHost holds the
+            // driver lock)
+            buf.prefetch_staging.reserve(
+                magpie,
+                (size_t)h.n_embd * (size_t)std::max(text_len, prefetch_max_window) * sizeof(float));
+            if (!ws.encoder.evalDevice(
+                    window, threads, buf.prefetch_text_cond_device, ws.prefetch_backend,
+                    &ws.prefetch_encoder_allocr)) {
+                return;
+            }
+            std::vector<float>& cond = chunk_prefetch.text_cond;
+            cond.resize((size_t)h.n_embd * (size_t)text_len);
+            magpietts_backend_tensor_get_staged(
+                magpie, buf.prefetch_staging, buf.prefetch_text_cond_device.tensor, cond.data(), 0,
+                cond.size() * sizeof(float));
+            if (!splice_longform_history_context(
+                    cond, text_len, current_len, h.n_embd, history_context, history_context_len)) {
+                return;
+            }
+            if (text_len > current_len) {
+                magpietts_backend_tensor_set_staged(
+                    magpie, buf.prefetch_staging, buf.prefetch_text_cond_device.tensor, cond.data(),
+                    0, cond.size() * sizeof(float));
+            }
+            if (!buf.prefetch_cond_hidden.alloc2d(
+                    magpie, GGML_TYPE_F32, h.n_embd, 1, "prefetch_hidden_cond") ||
+                !buf.prefetch_uncond_hidden.alloc2d(
+                    magpie, GGML_TYPE_F32, h.n_embd, 1, "prefetch_hidden_uncond")) {
+                return;
+            }
+            std::vector<std::vector<int32_t>> bos_codes((size_t)h.audio_codebooks);
+            for (auto& codes : bos_codes) {
+                codes.assign((size_t)h.frame_stacking_factor, h.audio_bos_id);
+            }
+            magpietts_decoder_attention attention;
+            attention.prior = chunk_prefetch.prior.empty() ? nullptr : &chunk_prefetch.prior;
+            attention.alignment_scores =
+                chunk_prefetch.collect_alignment ? &chunk_prefetch.alignment : nullptr;
+            buf.prefetch_cross_kv.clear();
+            chunk_prefetch.ok = ws.decoder.prefillPair(
+                cond, text_len, bos_codes, speaker, threads, buf.prefetch_cond_kv,
+                buf.prefetch_uncond_kv, &buf.prefetch_text_cond_device, &buf.prefetch_cond_hidden,
+                &buf.prefetch_uncond_hidden, &buf.prefetch_cross_kv,
+                (attention.prior || attention.alignment_scores) ? &attention : nullptr,
+                buf.prefetch_staging, ws.prefetch_backend, &ws.prefetch_prefill_allocr,
+                &ws.prefetch_cross_allocr);
+        });
         chunk_prefetch.launched = true;
     }
 
@@ -1756,12 +1751,12 @@ class MagpieRequestRunner {
         if (chunk_prefetch.launched) {
             chunk_prefetch.join();
             const std::vector<float>* live_prior = attention_prior.priorForStep(h, text_len);
-            const bool prior_matches = live_prior ? (*live_prior == chunk_prefetch.prior)
-                                                  : chunk_prefetch.prior.empty();
-            adopted_prefetch = chunk_prefetch.ok && chunk_prefetch.chunk_index == chunk_index &&
-                               chunk_prefetch.text_window == text_window && prior_matches &&
-                               chunk_prefetch.collect_alignment ==
-                                   attention_prior.shouldCollect(h, 0, text_len);
+            const bool prior_matches =
+                live_prior ? (*live_prior == chunk_prefetch.prior) : chunk_prefetch.prior.empty();
+            adopted_prefetch =
+                chunk_prefetch.ok && chunk_prefetch.chunk_index == chunk_index &&
+                chunk_prefetch.text_window == text_window && prior_matches &&
+                chunk_prefetch.collect_alignment == attention_prior.shouldCollect(h, 0, text_len);
             if (params.verbose) {
                 fprintf(
                     stderr, "%s text chunk %zu/%zu prefetch %s\n", label_, chunk_index + 1,
@@ -1794,8 +1789,8 @@ class MagpieRequestRunner {
             if (state_.longform_active) {
                 text_cond.resize((size_t)h.n_embd * (size_t)text_len);
                 magpietts_backend_tensor_get_staged(
-                    magpie_, state_.text_context_staging, text_cond_device.tensor,
-                    text_cond.data(), 0, text_cond.size() * sizeof(float));
+                    magpie_, state_.text_context_staging, text_cond_device.tensor, text_cond.data(),
+                    0, text_cond.size() * sizeof(float));
             }
             if (params.use_local_transformer && !allocHiddenDevice()) {
                 return cancelWorker();
@@ -1921,7 +1916,7 @@ class MagpieRequestRunner {
         }
         const magpietts_decoder_attention* decoder_attention_arg =
             (decoder_attention.prior || decoder_attention.alignment_scores) ? &decoder_attention
-                                                                             : nullptr;
+                                                                            : nullptr;
         const int sample_frame_index = state_.decoder_frames_generated;
 
         if (state_.use_cuda_sampling) {
@@ -1935,8 +1930,8 @@ class MagpieRequestRunner {
                         max_decoder_positions);
                     if (decode_ok) {
                         ggml_backend_tensor_copy_async(
-                            magpie_.backend, magpie_.backend,
-                            buffers_.prefetch_cond_hidden.tensor, cond_hidden_device.tensor);
+                            magpie_.backend, magpie_.backend, buffers_.prefetch_cond_hidden.tensor,
+                            cond_hidden_device.tensor);
                         ggml_backend_tensor_copy_async(
                             magpie_.backend, magpie_.backend,
                             buffers_.prefetch_uncond_hidden.tensor, uncond_hidden_device.tensor);
@@ -1945,8 +1940,7 @@ class MagpieRequestRunner {
                         }
                     } else if (params.verbose) {
                         fprintf(
-                            stderr, "%s prefetched prefill rejected; running it inline\n",
-                            label_);
+                            stderr, "%s prefetched prefill rejected; running it inline\n", label_);
                     }
                 }
                 if (!decode_ok) {
@@ -1957,8 +1951,8 @@ class MagpieRequestRunner {
                                          text_cond, text_len, audio_codes, params.speaker,
                                          params.threads, cond_kv, uncond_kv, cond, uncond,
                                          max_decoder_positions, nullptr, &text_cond_device,
-                                         &cond_hidden_device, &uncond_hidden_device,
-                                         &cond_cross_kv, decoder_attention_arg)
+                                         &cond_hidden_device, &uncond_hidden_device, &cond_cross_kv,
+                                         decoder_attention_arg)
                                    : decoder.evalPair(
                                          text_cond, text_len, audio_codes, params.speaker,
                                          params.threads, cond, uncond, nullptr, &text_cond_device,
@@ -1968,8 +1962,7 @@ class MagpieRequestRunner {
                                    ? decoder.evalCached(
                                          text_cond, text_len, audio_codes, params.speaker, true,
                                          params.threads, cond_kv, cond, nullptr, &text_cond_device,
-                                         &cond_hidden_device, &cond_cross_kv,
-                                         decoder_attention_arg)
+                                         &cond_hidden_device, &cond_cross_kv, decoder_attention_arg)
                                    : decoder.eval(
                                          text_cond, text_len, audio_codes, params.speaker, true,
                                          params.threads, cond, nullptr, &text_cond_device,
@@ -2027,13 +2020,12 @@ class MagpieRequestRunner {
                         : (params.use_kv_cache
                                ? decoder.evalCached(
                                      text_cond, text_len, audio_codes, params.speaker, true,
-                                     params.threads, cond_kv, cond, &cuda_sample,
-                                     &text_cond_device, nullptr, &cond_cross_kv,
-                                     decoder_attention_arg)
+                                     params.threads, cond_kv, cond, &cuda_sample, &text_cond_device,
+                                     nullptr, &cond_cross_kv, decoder_attention_arg)
                                : decoder.eval(
                                      text_cond, text_len, audio_codes, params.speaker, true,
-                                     params.threads, cond, &cuda_sample, &text_cond_device,
-                                     nullptr, decoder_attention_arg));
+                                     params.threads, cond, &cuda_sample, &text_cond_device, nullptr,
+                                     decoder_attention_arg));
                 if (!decode_ok) {
                     return cancelWorker();
                 }
@@ -2062,15 +2054,14 @@ class MagpieRequestRunner {
                 }
             } else {
                 const bool cond_ok =
-                    params.use_kv_cache
-                        ? decoder.evalCached(
-                              text_cond, text_len, audio_codes, params.speaker, true,
-                              params.threads, cond_kv, cond, nullptr, nullptr, nullptr,
-                              &cond_cross_kv, decoder_attention_arg)
-                        : decoder.eval(
-                              text_cond, text_len, audio_codes, params.speaker, true,
-                              params.threads, cond, nullptr, nullptr, nullptr,
-                              decoder_attention_arg);
+                    params.use_kv_cache ? decoder.evalCached(
+                                              text_cond, text_len, audio_codes, params.speaker,
+                                              true, params.threads, cond_kv, cond, nullptr, nullptr,
+                                              nullptr, &cond_cross_kv, decoder_attention_arg)
+                                        : decoder.eval(
+                                              text_cond, text_len, audio_codes, params.speaker,
+                                              true, params.threads, cond, nullptr, nullptr, nullptr,
+                                              decoder_attention_arg);
                 if (!cond_ok) {
                     return cancelWorker();
                 }
@@ -2346,8 +2337,8 @@ class MagpieRequestRunner {
                 metrics.codec_rtfx, metrics.audio_s, metrics.e2e_elapsed_s, metrics.e2e_rtf,
                 metrics.e2e_rtfx, metrics.e2e.first_event_ms, metrics.e2e.inter_event_avg_ms(),
                 metrics.e2e.inter_event_min_value_ms(), metrics.e2e.inter_event_max_ms,
-                metrics.e2e.inter_event_p95_ms(), metrics.e2e.inter_event_p99_ms(),
-                metrics.chunks, metrics.e2e_chunks);
+                metrics.e2e.inter_event_p95_ms(), metrics.e2e.inter_event_p99_ms(), metrics.chunks,
+                metrics.e2e_chunks);
         }
         return true;
     }

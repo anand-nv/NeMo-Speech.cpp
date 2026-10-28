@@ -10,7 +10,8 @@
 
 namespace nemo_speech::tts {
 
-MagpieBatchScheduler::MagpieBatchScheduler(IMagpieBatchBackend& backend, const MagpieBatchConfig& config)
+MagpieBatchScheduler::MagpieBatchScheduler(
+    IMagpieBatchBackend& backend, const MagpieBatchConfig& config)
     : backend_(backend), config_(config), pool_(config.max_slots),
       slot_owner_(static_cast<size_t>(std::max(0, config.max_slots)), 0) {
     config_.max_prefills_per_iter = std::max(1, config_.max_prefills_per_iter);
@@ -304,10 +305,12 @@ MagpieBatchScheduler::runPrefills() {
         ~AddTime() {
             std::lock_guard<std::mutex> lock(s->mutex_);
             s->stats_.prefill_ms +=
-                std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+                std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0)
+                    .count();
         }
     } add_time{this, t0};
-    const int budget = std::min<int>(config_.max_prefills_per_iter, static_cast<int>(pending.size()));
+    const int budget =
+        std::min<int>(config_.max_prefills_per_iter, static_cast<int>(pending.size()));
     for (int i = 0; i < budget; ++i) {
         const EntryPtr& e = pending[static_cast<size_t>(i)];
         const ggml_nvtx::range nvtx_range("magpietts_batch_prefill");
@@ -355,7 +358,8 @@ MagpieBatchScheduler::runDecode() {
         ~AddTime() {
             std::lock_guard<std::mutex> lock(s->mutex_);
             s->stats_.decode_ms +=
-                std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+                std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0)
+                    .count();
         }
     } add_time{this, t0};
     std::vector<EntryPtr> batch;

@@ -11,7 +11,8 @@
 namespace nemo_speech::tts {
 
 MagpieBatchEngine::MagpieBatchEngine(
-    magpietts_model& magpie, const nanocodec::NanoCodecModel& codec, const MagpieBatchConfig& config)
+    magpietts_model& magpie, const nanocodec::NanoCodecModel& codec,
+    const MagpieBatchConfig& config)
     : magpie_(magpie), codec_(codec), config_(config) {}
 
 MagpieBatchEngine::~MagpieBatchEngine() {

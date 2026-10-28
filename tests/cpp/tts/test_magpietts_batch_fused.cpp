@@ -38,8 +38,9 @@ struct Request {
 };
 
 tts::MagpieBatchRowInput
-make_row(const tts::magpietts_hparams& h, Request& r, int step, const std::vector<int32_t>* prev,
-         const std::vector<float>* prior) {
+make_row(
+    const tts::magpietts_hparams& h, Request& r, int step, const std::vector<int32_t>* prev,
+    const std::vector<float>* prior) {
     tts::MagpieBatchRowInput row;
     if (prev)
         row.tokens = *prev;
@@ -82,7 +83,8 @@ main(int argc, char** argv) {
         if (a == "--rows" && i + 1 < argc) {
             row_counts.clear();
             std::stringstream ss(argv[++i]);
-            for (std::string t; std::getline(ss, t, ',');) row_counts.push_back(std::atoi(t.c_str()));
+            for (std::string t; std::getline(ss, t, ',');)
+                row_counts.push_back(std::atoi(t.c_str()));
         } else if (a == "--steps" && i + 1 < argc) {
             steps = std::atoi(argv[++i]);
         } else if (a == "--no-cfg") {
@@ -169,8 +171,8 @@ main(int argc, char** argv) {
             for (int b = 0; b < B; ++b) {
                 Request& r = reqs[static_cast<size_t>(ids[b])];
                 priors[static_cast<size_t>(b)] = prior_for(s, static_cast<int>(r.tokens.size()));
-                rows[static_cast<size_t>(b)] =
-                    make_row(h, r, s, &prev[static_cast<size_t>(b)], &priors[static_cast<size_t>(b)]);
+                rows[static_cast<size_t>(b)] = make_row(
+                    h, r, s, &prev[static_cast<size_t>(b)], &priors[static_cast<size_t>(b)]);
                 slots.push_back(b);
                 ptrs.push_back(&rows[static_cast<size_t>(b)]);
             }
@@ -178,7 +180,9 @@ main(int argc, char** argv) {
             const auto t0 = std::chrono::steady_clock::now();
             if (!backend.decode(slots, ptrs, outs))
                 return false;
-            total_ms += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+            total_ms +=
+                std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0)
+                    .count();
             for (int b = 0; b < B; ++b) {
                 Request& r = reqs[static_cast<size_t>(ids[b])];
                 r.codes.push_back(outs[static_cast<size_t>(b)].codes);
@@ -242,7 +246,8 @@ main(int argc, char** argv) {
         failures += mismatched;
     }
     if (failures) {
-        std::fprintf(stderr, "FAIL: %d request(s) differ between batched and solo decoding\n", failures);
+        std::fprintf(
+            stderr, "FAIL: %d request(s) differ between batched and solo decoding\n", failures);
         return 1;
     }
     std::printf("batched fused step is batch-invariant\n");

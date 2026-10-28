@@ -93,7 +93,7 @@ struct bf_phase_args {
     const float* xd = nullptr;
     int xgroup = 0;
     // ... or quantized in the prologue from one of these
-    int assemble = 0;                     // 1: decoder input embedding, 2: LT round-0 input
+    int assemble = 0;                       // 1: decoder input embedding, 2: LT round-0 input
     const void* const* emb_rows = nullptr;  // [rows][BF_MAX_CODEBOOKS] embedding rows (assemble 1)
     int n_emb = 0;
     float emb_scale = 1.f;
@@ -102,7 +102,7 @@ struct bf_phase_args {
     const float* h_in = nullptr;            // [L][K] (assemble 2)
     const void* pos_row = nullptr;          // positional row (assemble 2)
     int emb_type = 0, pos_type = 0;
-    float* x_store = nullptr;  // residual stream [L][K] initialized by tile 0 (assemble)
+    float* x_store = nullptr;       // residual stream [L][K] initialized by tile 0 (assemble)
     const float* norm_w = nullptr;  // in-block LayerNorm weight (assemble)
     float ln_eps = 0.f;
     const float* attn_part = nullptr;  // self-attention partials [L][H][SPLITS][66] (combined)
@@ -219,7 +219,8 @@ bf_chain_gemv(const bf_phase_args& a, int tile, Smem& sm) {
             for (int k = tid; k < K; k += LTF_THREADS) {
                 const float x0 = bf_input(a, l, k);
                 if (tile == 0)
-                    for (int dup = l; dup < NL; dup += distinct) a.x_store[(size_t)dup * K + k] = x0;
+                    for (int dup = l; dup < NL; dup += distinct)
+                        a.x_store[(size_t)dup * K + k] = x0;
                 s0 += x0;
                 q0 += x0 * x0;
             }
@@ -316,13 +317,16 @@ bf_chain_gemv(const bf_phase_args& a, int tile, Smem& sm) {
                         acc1);
                 } else if (a.xgroup == 32) {
                     ltf_dot_q8_prefetched_xq<R, MB, 32>(
-                        pf, K, a.xq + (size_t)l0 * K, a.xd + (size_t)l0 * (K / 32), lane, acc0, acc1);
+                        pf, K, a.xq + (size_t)l0 * K, a.xd + (size_t)l0 * (K / 32), lane, acc0,
+                        acc1);
                 } else if (a.xgroup == 16) {
                     ltf_dot_q8_prefetched_xq<R, MB, 16>(
-                        pf, K, a.xq + (size_t)l0 * K, a.xd + (size_t)l0 * (K / 16), lane, acc0, acc1);
+                        pf, K, a.xq + (size_t)l0 * K, a.xd + (size_t)l0 * (K / 16), lane, acc0,
+                        acc1);
                 } else {
                     ltf_dot_q8_prefetched_xq<R, MB, 4>(
-                        pf, K, a.xq + (size_t)l0 * K, a.xd + (size_t)l0 * (K / 4), lane, acc0, acc1);
+                        pf, K, a.xq + (size_t)l0 * K, a.xd + (size_t)l0 * (K / 4), lane, acc0,
+                        acc1);
                 }
             }
             if (lane == 0) {
@@ -475,7 +479,8 @@ struct bdf_args {
 
 template <class Smem>
 __device__ __forceinline__ void
-bdf_self_attention(const bdf_args& a, const float* kbase, const float* vbase, int tile, int nblocks, Smem& sm) {
+bdf_self_attention(
+    const bdf_args& a, const float* kbase, const float* vbase, int tile, int nblocks, Smem& sm) {
     const int tid = threadIdx.x;
     const int warp = tid >> 5;
     const int lane = tid & 31;
@@ -810,8 +815,8 @@ bdf_kernel(const bdf_args a) {
 
     for (int i = tid; i < a.B * a.n_codebooks; i += LTF_THREADS) {
         const int b = i / a.n_codebooks, c = i - b * a.n_codebooks;
-        s_emb[b * BF_MAX_CODEBOOKS + c] = reinterpret_cast<const char*>(a.audio_emb[c]) +
-                                          (size_t)a.tokens[i] * E * emb_elem;
+        s_emb[b * BF_MAX_CODEBOOKS + c] =
+            reinterpret_cast<const char*>(a.audio_emb[c]) + (size_t)a.tokens[i] * E * emb_elem;
     }
     for (int b = tid; b < a.B; b += LTF_THREADS)
         s_pos[b] = reinterpret_cast<const char*>(a.pos_emb) + (size_t)a.positions[b] * E * pos_elem;
@@ -972,7 +977,7 @@ bdf_kernel(const bdf_args a) {
         ltf_chain_stage(L.ff2, a.NFF, E, tile, sm);
         sync();
         BF_STAMP(0, 4);  // ff1
-        {  // ff2 + residual
+        {                // ff2 + residual
             bf_phase_args g{};
             g.NL = a.NL;
             g.xq = a.ff_q;
@@ -1073,8 +1078,10 @@ blt_attention_split(
     for (int i = 0; i < CH; ++i) {
         const int j = j0 + i;
         const bool ok = j < pos_rows;
-        k2[i] = ok ? *reinterpret_cast<const float2*>(kbase + (size_t)j * K) : make_float2(0.f, 0.f);
-        v2[i] = ok ? *reinterpret_cast<const float2*>(vbase + (size_t)j * K) : make_float2(0.f, 0.f);
+        k2[i] =
+            ok ? *reinterpret_cast<const float2*>(kbase + (size_t)j * K) : make_float2(0.f, 0.f);
+        v2[i] =
+            ok ? *reinterpret_cast<const float2*>(vbase + (size_t)j * K) : make_float2(0.f, 0.f);
     }
     float sc[CH];
     float m = -INFINITY;
@@ -1187,10 +1194,11 @@ blt_kernel(const blt_args a) {
             ltf_chain_stage(L.o, K, K, tile, sm);
             {  // attention over (head, lane) tasks by the last blocks to finish their qkv rows
                 const int n_tasks = a.H * a.NL;
-                const int attn_blocks = min(
-                    (n_tasks + BLT_ATTN_TASKS_PER_BLOCK - 1) / BLT_ATTN_TASKS_PER_BLOCK,
-                    (int)nblocks);
-                const int rank = ltf_chain_arrival_rank(a.barrier + 1, nblocks, attn_blocks, &s_flag);
+                const int attn_blocks =
+                    min((n_tasks + BLT_ATTN_TASKS_PER_BLOCK - 1) / BLT_ATTN_TASKS_PER_BLOCK,
+                        (int)nblocks);
+                const int rank =
+                    ltf_chain_arrival_rank(a.barrier + 1, nblocks, attn_blocks, &s_flag);
                 const int slot = rank - ((int)nblocks - attn_blocks);
                 if (slot >= 0) {
                     const int local_task = warp / BLT_ATTN_SPLIT;
@@ -1376,17 +1384,22 @@ blt_kernel(const blt_args a) {
 template <class Tier, class Fits>
 bool
 bf_tier_usable(const void* kernel, int sms, Fits&& fits) {
-    if (LTF_CHAIN_BLOCKS_PER_SM * sms < Tier::grid || Tier::grid > LTF_CHAIN_MAX_GRID || !fits(Tier{}))
+    if (LTF_CHAIN_BLOCKS_PER_SM * sms < Tier::grid || Tier::grid > LTF_CHAIN_MAX_GRID ||
+        !fits(Tier{}))
         return false;
     const int smem = (int)sizeof(bf_smem<Tier>);
-    if (cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, smem) != cudaSuccess) {
+    if (cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, smem) !=
+        cudaSuccess) {
         (void)cudaGetLastError();
         return false;
     }
-    if (cudaFuncSetAttribute(kernel, cudaFuncAttributePreferredSharedMemoryCarveout, cudaSharedmemCarveoutMaxShared) != cudaSuccess)
+    if (cudaFuncSetAttribute(
+            kernel, cudaFuncAttributePreferredSharedMemoryCarveout,
+            cudaSharedmemCarveoutMaxShared) != cudaSuccess)
         (void)cudaGetLastError();
     int per_sm = 0;
-    if (cudaOccupancyMaxActiveBlocksPerMultiprocessor(&per_sm, kernel, LTF_THREADS, smem) != cudaSuccess) {
+    if (cudaOccupancyMaxActiveBlocksPerMultiprocessor(&per_sm, kernel, LTF_THREADS, smem) !=
+        cudaSuccess) {
         (void)cudaGetLastError();
         return false;
     }
@@ -1461,7 +1474,8 @@ magpietts_batch_decoder_fused*
 magpietts_batch_decoder_fused_create(
     const magpietts_decoder_fused_weights& w, const magpietts_batch_decoder_fused_cache& cache,
     char* error, size_t error_size) {
-    if (!ltf_kernel_arch_supported(reinterpret_cast<const void*>(bdf_kernel<ltf_chain_tier_large>))) {
+    if (!ltf_kernel_arch_supported(
+            reinterpret_cast<const void*>(bdf_kernel<ltf_chain_tier_large>))) {
         ltf_set_error(error, error_size, "batched fused decoder: needs sm_80+");
         return nullptr;
     }
@@ -1472,9 +1486,8 @@ magpietts_batch_decoder_fused_create(
         w.n_codebooks > BF_MAX_CODEBOOKS || !w.audio_emb || !w.pos_emb || !w.layers ||
         cache.cache_len <= 0 || !cache.kv_arena || cache.arena_lanes <= 0 ||
         cache.text_capacity <= 0 || cache.text_capacity > BF_XATTN_BLOCKS * BF_XATTN_MAX_KEYS ||
-        cache.cache_len + 1 > BF_ATTN_SPLITS * BF_ATTN_MAX_RANGE ||
-        !cache.cross_k || !cache.cross_v ||
-        (w.emb_type != LTF_TYPE_F16 && w.emb_type != LTF_TYPE_F32) ||
+        cache.cache_len + 1 > BF_ATTN_SPLITS * BF_ATTN_MAX_RANGE || !cache.cross_k ||
+        !cache.cross_v || (w.emb_type != LTF_TYPE_F16 && w.emb_type != LTF_TYPE_F32) ||
         (w.pos_type != LTF_TYPE_F16 && w.pos_type != LTF_TYPE_F32) ||
         BF_MAX_LANES / 2 * w.cross_dim > BF_SX) {
         ltf_set_error(error, error_size, "batched fused decoder: unsupported shape");
@@ -1530,9 +1543,11 @@ magpietts_batch_decoder_fused_create(
                // producer staging of every lane's rows of the widest phase
                BF_MAX_LANES * ((std::max(3 * E, NFF) + grid - 1) / grid) <= BF_SX;
     };
-    if (bf_tier_usable<ltf_chain_tier_large>(reinterpret_cast<const void*>(bdf_kernel<ltf_chain_tier_large>), sms, fits)) {
+    if (bf_tier_usable<ltf_chain_tier_large>(
+            reinterpret_cast<const void*>(bdf_kernel<ltf_chain_tier_large>), sms, fits)) {
         f->grid = ltf_chain_tier_large::grid;
-    } else if (bf_tier_usable<ltf_chain_tier_small>(reinterpret_cast<const void*>(bdf_kernel<ltf_chain_tier_small>), sms, fits)) {
+    } else if (bf_tier_usable<ltf_chain_tier_small>(
+                   reinterpret_cast<const void*>(bdf_kernel<ltf_chain_tier_small>), sms, fits)) {
         f->grid = ltf_chain_tier_small::grid;
     } else {
         ltf_set_error(error, error_size, "batched fused decoder: no persistent tier fits this GPU");
@@ -1551,10 +1566,12 @@ magpietts_batch_decoder_fused_create(
                  off_stats = reserve(L * 2 * LTF_CHAIN_MAX_GRID), off_qkv = reserve(L * 3 * E),
                  off_apart = reserve(L * w.n_head * BF_ATTN_SPLITS * 66), off_qc = reserve(B * CD),
                  off_xpart = reserve(B * BF_XATTN_BLOCKS * (2 + CD)),
-                 off_xs = reserve(B * cache.text_capacity), off_aa = reserve(B * cache.text_capacity),
-                 off_ffq = reserve(L * NFF / 4), off_ffd = reserve(L * NFF / 16),
-                 off_cq = reserve(L * E / 4), off_cd = reserve(L * E / 32);
-    if (cudaMalloc(&f->arena, total) != cudaSuccess || cudaMemset(f->arena, 0, total) != cudaSuccess ||
+                 off_xs = reserve(B * cache.text_capacity),
+                 off_aa = reserve(B * cache.text_capacity), off_ffq = reserve(L * NFF / 4),
+                 off_ffd = reserve(L * NFF / 16), off_cq = reserve(L * E / 4),
+                 off_cd = reserve(L * E / 32);
+    if (cudaMalloc(&f->arena, total) != cudaSuccess ||
+        cudaMemset(f->arena, 0, total) != cudaSuccess ||
         cudaMalloc(&f->barrier, (3 + BF_MAX_ROWS) * sizeof(unsigned int)) != cudaSuccess) {
         ltf_set_error(error, error_size, "batched fused decoder: allocation failed");
         magpietts_batch_decoder_fused_free(f);
@@ -1676,8 +1693,10 @@ struct magpietts_batch_lt_fused {
 };
 
 magpietts_batch_lt_fused*
-magpietts_batch_lt_fused_create(const magpietts_lt_fused_weights& w, char* error, size_t error_size) {
-    if (!ltf_kernel_arch_supported(reinterpret_cast<const void*>(blt_kernel<ltf_chain_tier_large>))) {
+magpietts_batch_lt_fused_create(
+    const magpietts_lt_fused_weights& w, char* error, size_t error_size) {
+    if (!ltf_kernel_arch_supported(
+            reinterpret_cast<const void*>(blt_kernel<ltf_chain_tier_large>))) {
         ltf_set_error(error, error_size, "batched fused local transformer: needs sm_80+");
         return nullptr;
     }
@@ -1702,12 +1721,14 @@ magpietts_batch_lt_fused_create(const magpietts_lt_fused_weights& w, char* error
         bool ok = bf_repack(L.qkv, L.qkv_type, 3 * K, K, f->owned, d.qkv) &&
                   bf_repack(L.o, L.o_type, K, K, f->owned, d.o) &&
                   bf_repack(L.ff1, L.ff1_type, w.n_ff, K, f->owned, d.ff1) &&
-                  bf_repack(L.ff2, L.ff2_type, K, w.n_ff, f->owned, d.ff2) && L.norm_self && L.norm_ff;
+                  bf_repack(L.ff2, L.ff2_type, K, w.n_ff, f->owned, d.ff2) && L.norm_self &&
+                  L.norm_ff;
         if (ok)
             ok = ltf_ln_fold_constants(d.qkv, L.norm_self, 3 * K, K, f->owned, d.qkv_c) &&
                  ltf_ln_fold_constants(d.ff1, L.norm_ff, w.n_ff, K, f->owned, d.ff1_c);
         if (!ok) {
-            ltf_set_error(error, error_size, "batched fused local transformer: Q8_0 weights required");
+            ltf_set_error(
+                error, error_size, "batched fused local transformer: Q8_0 weights required");
             magpietts_batch_lt_fused_free(f);
             return nullptr;
         }
@@ -1739,12 +1760,15 @@ magpietts_batch_lt_fused_create(const magpietts_lt_fused_weights& w, char* error
                BF_MAX_ROWS <= grid &&
                BF_MAX_LANES * ((std::max({3 * K, w.vocab, w.n_ff}) + grid - 1) / grid) <= BF_SX;
     };
-    if (bf_tier_usable<ltf_chain_tier_large>(reinterpret_cast<const void*>(blt_kernel<ltf_chain_tier_large>), sms, fits)) {
+    if (bf_tier_usable<ltf_chain_tier_large>(
+            reinterpret_cast<const void*>(blt_kernel<ltf_chain_tier_large>), sms, fits)) {
         f->grid = ltf_chain_tier_large::grid;
-    } else if (bf_tier_usable<ltf_chain_tier_small>(reinterpret_cast<const void*>(blt_kernel<ltf_chain_tier_small>), sms, fits)) {
+    } else if (bf_tier_usable<ltf_chain_tier_small>(
+                   reinterpret_cast<const void*>(blt_kernel<ltf_chain_tier_small>), sms, fits)) {
         f->grid = ltf_chain_tier_small::grid;
     } else {
-        ltf_set_error(error, error_size, "batched fused local transformer: no persistent tier fits");
+        ltf_set_error(
+            error, error_size, "batched fused local transformer: no persistent tier fits");
         magpietts_batch_lt_fused_free(f);
         return nullptr;
     }
@@ -1762,7 +1786,8 @@ magpietts_batch_lt_fused_create(const magpietts_lt_fused_weights& w, char* error
                  off_ctx_d = reserve(L * K / 32), off_ff_q = reserve(L * (size_t)w.n_ff / 4),
                  off_ff_d = reserve(L * (size_t)w.n_ff / 16), off_h_q = reserve(L * K / 4),
                  off_h_d = reserve(L * K / 4), off_stats = reserve(L * 2 * LTF_CHAIN_MAX_GRID);
-    if (cudaMalloc(&f->arena, total) != cudaSuccess || cudaMemset(f->arena, 0, total) != cudaSuccess ||
+    if (cudaMalloc(&f->arena, total) != cudaSuccess ||
+        cudaMemset(f->arena, 0, total) != cudaSuccess ||
         cudaMalloc(&f->barrier, 2 * sizeof(unsigned int)) != cudaSuccess) {
         ltf_set_error(error, error_size, "batched fused local transformer: allocation failed");
         magpietts_batch_lt_fused_free(f);
@@ -1840,7 +1865,8 @@ magpietts_batch_lt_fused_run(
     a.sample_eos_id = s.audio_eos_id;
     cudaError_t err = cudaMemsetAsync(f->barrier, 0, 2 * sizeof(unsigned int), stream);
     if (err != cudaSuccess) {
-        ltf_set_error(error, error_size, "batched fused local transformer: barrier reset failed", err);
+        ltf_set_error(
+            error, error_size, "batched fused local transformer: barrier reset failed", err);
         return false;
     }
     if (f->grid == ltf_chain_tier_large::grid) {

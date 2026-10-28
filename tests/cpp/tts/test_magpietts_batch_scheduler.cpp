@@ -45,7 +45,8 @@ struct Log {
 class FakeBackend final : public tts::IMagpieBatchBackend {
    public:
     explicit FakeBackend(int max_slots) : max_slots_(max_slots) {}
-    bool prefill(int slot, const tts::MagpieBatchRowInput& row, tts::MagpieBatchRowOutput& out) override {
+    bool prefill(
+        int slot, const tts::MagpieBatchRowInput& row, tts::MagpieBatchRowOutput& out) override {
         ++prefills;
         prefill_slots.push_back(slot);
         if (fail_prefill_slot == slot)
@@ -163,7 +164,8 @@ main() {
         std::vector<std::unique_ptr<Result>> results;
         const int lengths[5] = {3, 8, 2, 5, 4};
         for (int i = 0; i < 5; ++i) {
-            reqs.push_back(std::make_shared<FakeRequest>("r" + std::to_string(i), std::vector<int>{lengths[i]}, log));
+            reqs.push_back(std::make_shared<FakeRequest>(
+                "r" + std::to_string(i), std::vector<int>{lengths[i]}, log));
             results.push_back(std::make_unique<Result>());
             expect(sched.submit(reqs.back(), done_into(*results.back())) > 0, "submit");
         }
@@ -175,18 +177,29 @@ main() {
         for (const auto& e : log.events)
             if (e.rfind("start ", 0) == 0)
                 starts.push_back(e.substr(6));
-        expect(starts == std::vector<std::string>({"r0", "r1", "r2", "r3", "r4"}), "FCFS admission order");
+        expect(
+            starts == std::vector<std::string>({"r0", "r1", "r2", "r3", "r4"}),
+            "FCFS admission order");
         for (int i = 0; i < 5; ++i) {
-            expect(results[i]->calls == 1 && results[i]->ok, "request " + std::to_string(i) + " completed once");
-            expect(reqs[i]->frames_done == lengths[i], "request " + std::to_string(i) + " frame count");
+            expect(
+                results[i]->calls == 1 && results[i]->ok,
+                "request " + std::to_string(i) + " completed once");
+            expect(
+                reqs[i]->frames_done == lengths[i],
+                "request " + std::to_string(i) + " frame count");
         }
-        expect(backend.max_rows <= 2 && !backend.duplicate_slots && !backend.bad_slot, "slot bound");
+        expect(
+            backend.max_rows <= 2 && !backend.duplicate_slots && !backend.bad_slot, "slot bound");
         expect(backend.released.size() == 5, "every slot released once per request");
         const tts::MagpieBatchStats st = sched.stats();
-        expect(st.completed == 5 && st.active == 0 && st.queued == 0 && st.max_active == 2, "stats after drain");
+        expect(
+            st.completed == 5 && st.active == 0 && st.queued == 0 && st.max_active == 2,
+            "stats after drain");
         // r0 (3 frames) ends first: r2 must take its slot while r1 is still decoding
-        expect(backend.prefill_slots.size() == 5 && backend.prefill_slots[2] == backend.prefill_slots[0],
-               "a freed slot is reused by the next request");
+        expect(
+            backend.prefill_slots.size() == 5 &&
+                backend.prefill_slots[2] == backend.prefill_slots[0],
+            "a freed slot is reused by the next request");
     }
 
     // 2. Prefill budget: at most max_prefills_per_iter prefills per iteration, and decoding never
@@ -202,7 +215,8 @@ main() {
         std::vector<std::shared_ptr<FakeRequest>> reqs;
         std::vector<std::unique_ptr<Result>> results;
         for (int i = 0; i < 4; ++i) {
-            reqs.push_back(std::make_shared<FakeRequest>("p" + std::to_string(i), std::vector<int>{20}, log));
+            reqs.push_back(
+                std::make_shared<FakeRequest>("p" + std::to_string(i), std::vector<int>{20}, log));
             results.push_back(std::make_unique<Result>());
             sched.submit(reqs.back(), done_into(*results.back()));
         }
@@ -221,7 +235,8 @@ main() {
         }
         expect(backend.prefills == 4, "all prefills ran");
         for (size_t i = 1; i < decodes_between_prefills.size(); ++i)
-            expect(decodes_between_prefills[i] <= 3 + 1, "prefill waited at most the decode budget");
+            expect(
+                decodes_between_prefills[i] <= 3 + 1, "prefill waited at most the decode budget");
         sched.waitIdle();
         for (auto& r : results) expect(r->ok, "budgeted requests completed");
     }
@@ -240,9 +255,11 @@ main() {
         sched.submit(other, done_into(r2));
         sched.waitIdle();
         expect(r1.ok && r2.ok, "longform and its neighbour completed");
-        expect(longform->chunks_begun == 3 && longform->frames_done == 13, "three chunks, 13 frames");
+        expect(
+            longform->chunks_begun == 3 && longform->frames_done == 13, "three chunks, 13 frames");
         std::vector<int> long_slots;
-        for (size_t i = 0; i < backend.prefill_slots.size(); ++i) long_slots.push_back(backend.prefill_slots[i]);
+        for (size_t i = 0; i < backend.prefill_slots.size(); ++i)
+            long_slots.push_back(backend.prefill_slots[i]);
         expect(backend.prefills == 4, "three chunk prefills plus the neighbour's");
         int first = backend.prefill_slots[0];
         int same = 0;
@@ -316,7 +333,8 @@ main() {
         std::vector<std::shared_ptr<FakeRequest>> reqs;
         std::vector<std::unique_ptr<Result>> results;
         for (int i = 0; i < 40; ++i) {
-            reqs.push_back(std::make_shared<FakeRequest>("t" + std::to_string(i), std::vector<int>{1 + (i * 7) % 13, 1 + i % 3}, log));
+            reqs.push_back(std::make_shared<FakeRequest>(
+                "t" + std::to_string(i), std::vector<int>{1 + (i * 7) % 13, 1 + i % 3}, log));
             results.push_back(std::make_unique<Result>());
             sched.submit(reqs.back(), done_into(*results.back()));
         }
@@ -343,7 +361,8 @@ main() {
         std::vector<std::unique_ptr<Result>> results;
         const int lengths[5] = {3, 8, 2, 5, 4};
         for (int i = 0; i < 5; ++i) {
-            reqs.push_back(std::make_shared<FakeRequest>("s" + std::to_string(i), std::vector<int>{lengths[i]}, log));
+            reqs.push_back(std::make_shared<FakeRequest>(
+                "s" + std::to_string(i), std::vector<int>{lengths[i]}, log));
             results.push_back(std::make_unique<Result>());
             sched.submit(reqs.back(), done_into(*results.back()));
         }
@@ -361,16 +380,21 @@ main() {
                 ++admissions;
             }
             if (!s2_checked && reqs[2]->started) {
-                expect(reqs[0]->frames_done == 3 && reqs[1]->frames_done == 8,
-                       "static: s2 waits for the whole first batch, not just a free slot");
+                expect(
+                    reqs[0]->frames_done == 3 && reqs[1]->frames_done == 8,
+                    "static: s2 waits for the whole first batch, not just a free slot");
                 s2_checked = true;
             }
         }
         expect(s2_checked, "static: the second batch started");
         sched.waitIdle();
         for (int i = 0; i < 5; ++i) {
-            expect(results[i]->calls == 1 && results[i]->ok, "static: request " + std::to_string(i) + " completed");
-            expect(reqs[i]->frames_done == lengths[i], "static: request " + std::to_string(i) + " frame count");
+            expect(
+                results[i]->calls == 1 && results[i]->ok,
+                "static: request " + std::to_string(i) + " completed");
+            expect(
+                reqs[i]->frames_done == lengths[i],
+                "static: request " + std::to_string(i) + " frame count");
         }
         expect(admissions == 3, "static: batches {s0,s1}, {s2,s3}, {s4}");
         expect(sched.stats().max_active == 2 && !backend.duplicate_slots, "static: slot bound");
@@ -389,10 +413,14 @@ main() {
         Result ra;
         sched.submit(a, done_into(ra));
         sched.runOnce();
-        expect(!a->started && sched.stats().active == 0, "static: a partial batch waits for more requests");
+        expect(
+            !a->started && sched.stats().active == 0,
+            "static: a partial batch waits for more requests");
         std::this_thread::sleep_for(std::chrono::milliseconds(60));
         sched.runOnce();
-        expect(a->started && sched.stats().active == 1, "static: a partial batch starts after the wait");
+        expect(
+            a->started && sched.stats().active == 1,
+            "static: a partial batch starts after the wait");
         sched.waitIdle();
         expect(ra.calls == 1 && ra.ok, "static: the partial batch completed");
     }
@@ -410,7 +438,8 @@ main() {
         std::vector<std::shared_ptr<FakeRequest>> reqs;
         std::vector<std::unique_ptr<Result>> results;
         for (int i = 0; i < 22; ++i) {
-            reqs.push_back(std::make_shared<FakeRequest>("st" + std::to_string(i), std::vector<int>{1 + (i * 5) % 11}, log));
+            reqs.push_back(std::make_shared<FakeRequest>(
+                "st" + std::to_string(i), std::vector<int>{1 + (i * 5) % 11}, log));
             results.push_back(std::make_unique<Result>());
             sched.submit(reqs.back(), done_into(*results.back()));
         }

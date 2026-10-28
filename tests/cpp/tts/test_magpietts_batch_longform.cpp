@@ -81,7 +81,8 @@ main(int argc, char** argv) {
     add(kLong);
     for (const char* t : kShort) add(t);
     if (requests[0].size() < 3) {
-        std::fprintf(stderr, "FAIL: the longform text tokenized into %zu chunk(s)\n", requests[0].size());
+        std::fprintf(
+            stderr, "FAIL: the longform text tokenized into %zu chunk(s)\n", requests[0].size());
         return 1;
     }
 
@@ -113,7 +114,8 @@ main(int argc, char** argv) {
     // the same requests, all at once, through the engine
     tts::MagpieModel magpie;
     tts::nanocodec::NanoCodecModel codec;
-    if (!magpie.load(magpie_path, tts::MAGPIETTS_UMA_AUTO, false, false) || !codec.load(codec_path, false, false)) {
+    if (!magpie.load(magpie_path, tts::MAGPIETTS_UMA_AUTO, false, false) ||
+        !codec.load(codec_path, false, false)) {
         std::fprintf(stderr, "FAIL: model load\n");
         return 1;
     }

@@ -2,13 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 
-#include "ggml-backend.h"
-
 #include <array>
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
+
+#include "ggml-backend.h"
 
 namespace nemo_speech::tts::nanocodec {
 

@@ -259,9 +259,13 @@ def main() -> None:
         durations = [
             item["metrics"]["audio_seconds"]["mean"] for item in batched["runs"][0]["inputs"]
         ]
-        print(f"batched tts: {['%.2fs' % d for d in durations]}, rtfx {batched['runs'][0]['rtfx']:.1f}")
+        print(
+            f"batched tts: {['%.2fs' % d for d in durations]}, rtfx {batched['runs'][0]['rtfx']:.1f}"
+        )
         check(len(durations) == len(texts), "every batched request returned a result")
-        check(all(0.3 <= d <= 8.0 for d in durations), "batched TTS outputs have plausible durations")
+        check(
+            all(0.3 <= d <= 8.0 for d in durations), "batched TTS outputs have plausible durations"
+        )
 
         if args.tn_model_dir:
             wav = work / "tn.wav"

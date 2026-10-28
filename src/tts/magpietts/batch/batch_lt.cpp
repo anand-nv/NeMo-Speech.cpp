@@ -38,8 +38,8 @@ struct MagpieBatchLocalTransformer::Bucket {
     ggml_backend_buffer_t buffer = nullptr;
     std::vector<ggml_tensor*> arenas;  // per layer [lt_hidden * rounds, lanes, 2]
     ggml_tensor* lane_slots = nullptr;
-    std::vector<ggml_tensor*> states;  // per round [lanes, 2]
-    ggml_tensor* input = nullptr;      // [n_embd, lanes]
+    std::vector<ggml_tensor*> states;   // per round [lanes, 2]
+    ggml_tensor* input = nullptr;       // [n_embd, lanes]
     ggml_tensor* prev_codes = nullptr;  // [bucket]
     std::vector<std::unique_ptr<Graph>> rounds;
 
@@ -121,7 +121,8 @@ MagpieBatchLocalTransformer::buildBucket(int bucket, Bucket& b) {
     for (int c = 0; c < rounds; ++c) {
         // round c appends cache row c and attends the c rows before it
         std::fill(state.begin(), state.end(), c);
-        ggml_backend_tensor_set(b.states[static_cast<size_t>(c)], state.data(), 0, state.size() * sizeof(int32_t));
+        ggml_backend_tensor_set(
+            b.states[static_cast<size_t>(c)], state.data(), 0, state.size() * sizeof(int32_t));
     }
 
     for (int c = 0; c < rounds; ++c) {
@@ -179,7 +180,7 @@ MagpieBatchLocalTransformer::buildBucket(int bucket, Bucket& b) {
         ggml_tensor* logits = linear(
             ctx, model_.lt_out_w[static_cast<size_t>(c)], x,
             c < static_cast<int>(model_.lt_out_b.size()) ? model_.lt_out_b[static_cast<size_t>(c)]
-                                                        : nullptr);
+                                                         : nullptr);
         g->logits = ggml_cont(ctx, ggml_cast(ctx, logits, GGML_TYPE_F32));
         ggml_set_output(g->logits);
         ggml_build_forward_expand(g->gf, g->logits);
@@ -231,7 +232,9 @@ MagpieBatchLocalTransformer::sample(
     for (int c = 0; c < rounds; ++c) {
         Graph& g = *b.rounds[static_cast<size_t>(c)];
         if (c > 0) {
-            for (int r = 0; r < rows; ++r) prev[static_cast<size_t>(r)] = codes[static_cast<size_t>(r)][static_cast<size_t>(c - 1)];
+            for (int r = 0; r < rows; ++r)
+                prev[static_cast<size_t>(r)] =
+                    codes[static_cast<size_t>(r)][static_cast<size_t>(c - 1)];
             ggml_backend_tensor_set(b.prev_codes, prev.data(), 0, prev.size() * sizeof(int32_t));
         }
         if (ggml_backend_graph_compute(model_.backend, g.gf) != GGML_STATUS_SUCCESS) {

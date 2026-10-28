@@ -102,7 +102,8 @@ validate_config(const MagpieRuntimeConfig& config) {
         throw std::invalid_argument("max_batch_size must be at least 1");
     }
     if (config.max_batch_size > 1 && !config.use_local_transformer) {
-        throw std::invalid_argument("in-flight batching (max_batch_size > 1) needs the local transformer");
+        throw std::invalid_argument(
+            "in-flight batching (max_batch_size > 1) needs the local transformer");
     }
 }
 
@@ -233,7 +234,8 @@ class MagpieTtsRuntime::Impl {
             if (!pcm_callback || bytes.empty()) {
                 return true;
             }
-            return pcm_callback(std::string(reinterpret_cast<const char*>(bytes.data()), bytes.size()));
+            return pcm_callback(
+                std::string(reinterpret_cast<const char*>(bytes.data()), bytes.size()));
         };
         if (batch_) {
             std::string error;

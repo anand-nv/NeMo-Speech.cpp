@@ -44,8 +44,8 @@ struct magpietts_batch_decoder_fused_cache {
 
 // Device arrays of one batched step (B rows, L lanes).
 struct magpietts_batch_decoder_fused_step_args {
-    int rows = 0;   // B
-    int lanes = 0;  // B (no CFG) or 2B
+    int rows = 0;                         // B
+    int lanes = 0;                        // B (no CFG) or 2B
     const int32_t* tokens = nullptr;      // [B][n_codebooks]
     const int32_t* positions = nullptr;   // [B]
     const int32_t* arena_lane = nullptr;  // [L] slot-arena lane of every lane
