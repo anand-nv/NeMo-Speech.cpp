@@ -1892,6 +1892,311 @@ MagpieDecoder::prefillPair(
         staging, attention, backend, keep_allocr, &uncond_prefill_cache_, cross_allocr);
 }
 
+const ggml_tensor*
+MagpieDecoder::uncondPrefillHidden() const {
+    return uncond_prefill_cache_.ready.load(std::memory_order_acquire)
+               ? uncond_prefill_cache_.hidden
+               : nullptr;
+}
+
+int
+MagpieDecoder::prefillBatch(
+    const std::vector<MagpieDecoderPrefillRow>& rows, const MagpieDecoderPrefillTargets& targets,
+    int threads, ggml_gallocr_t* keep_allocr, magpietts_backend_tensor& cond_hidden,
+    ggml_backend_t backend) const {
+    const ggml_nvtx::range nvtx_range("magpietts_decoder_prefill_batch");
+    const magpietts_model& model = model_;
+    const magpietts_hparams& h = model.hparams;
+    const magpietts_transformer& tr = model.decoder;
+    const int B = (int)rows.size();
+    // The decoder must be the kernel-1 cross-attending one (its FFN then mixes no rows, so
+    // requests can share the token dimension) with the baked speaker context; the causal mask
+    // is the diag-mask one (the portable mask is for backends without it).
+    if (B <= 0 || h.dec_kernel != 1 || !tr.has_cross || !tr.causal || tr.portable_causal_mask ||
+        h.baked_context_length <= 0 || !model.baked_context || !cond_hidden.tensor ||
+        cond_hidden.tensor->ne[0] != h.n_embd || cond_hidden.tensor->ne[1] < B ||
+        (int)targets.self_arena.size() != (int)tr.layers.size() || !targets.cross_k ||
+        !targets.cross_v) {
+        return 0;
+    }
+    std::vector<std::vector<int32_t>> bos(
+        (size_t)h.audio_codebooks,
+        std::vector<int32_t>((size_t)h.frame_stacking_factor, h.audio_bos_id));
+    std::vector<std::vector<int32_t>> stacked;
+    if (!stack_audio_codes(bos, h, stacked)) {
+        return 0;
+    }
+    const int audio_len = (int)stacked[0].size();
+    const int T = h.baked_context_length + audio_len;
+    std::vector<int32_t> flat_codes;
+    for (const auto& codes : stacked)
+        flat_codes.insert(flat_codes.end(), codes.begin(), codes.end());
+    const bool cfg = rows[0].uncond_lane >= 0;
+    const magpietts_uncond_prefill_cache& uc = uncond_prefill_cache_;
+    if (cfg &&
+        (!uc.ready.load(std::memory_order_acquire) || uc.n_tokens != T ||
+         uc.n_layers != (int)tr.layers.size() || uc.n_embd != h.n_embd || uc.codes != flat_codes)) {
+        return 0;
+    }
+    if (T > targets.cache_len || T > h.n_ctx) {
+        return 0;
+    }
+    int Lmax = 0;
+    bool any_prior = false, any_alignment = false;
+    for (const MagpieDecoderPrefillRow& r : rows) {
+        if (!r.text_device || !r.text_device->tensor || r.text_len <= 0 ||
+            r.text_device->tensor->ne[0] != h.n_embd || r.text_device->tensor->ne[1] < r.text_len ||
+            r.cond_lane < 0 || (cfg != (r.uncond_lane >= 0)) || r.cross_slot < 0 ||
+            (r.prior && (int)r.prior->size() != r.text_len)) {
+            return 0;
+        }
+        Lmax = std::max(Lmax, r.text_len);
+        any_prior = any_prior || r.prior;
+        any_alignment = any_alignment || r.alignment;
+    }
+
+    const int64_t E = h.n_embd;
+    const int64_t n_head = tr.n_head, d_head = E / n_head;
+    const int64_t xh = tr.n_cross_head, xd = tr.n_cross_dhead, cd = xh * xd;
+    const size_t f = sizeof(float);
+    auto layer_selected = [](const std::vector<int32_t>& layers, int layer) {
+        return layers.empty() ||
+               std::find(layers.begin(), layers.end(), (int32_t)layer) != layers.end();
+    };
+
+    ggml_context* ctx = new_graph_context();
+    ggml_cgraph* gf = ggml_new_graph_custom(ctx, MAGPIETTS_MAX_NODES, false);
+    std::vector<std::pair<std::string, std::vector<int32_t>>> i32_inputs;
+    std::vector<std::pair<std::string, std::vector<float>>> f32_inputs;
+
+    // input: [baked speaker context | BOS frame] per row -> [E, T, B]
+    ggml_tensor* speakers = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, B);
+    ggml_set_name(speakers, "magpietts_prefill_batch_speakers");
+    ggml_set_input(speakers);
+    std::vector<int32_t> speaker_ids;
+    for (const MagpieDecoderPrefillRow& r : rows) speaker_ids.push_back(r.speaker);
+    i32_inputs.push_back({"magpietts_prefill_batch_speakers", speaker_ids});
+    std::vector<ggml_tensor*> audio_tok_inputs((size_t)h.stacked_audio_codebooks());
+    for (int c = 0; c < h.stacked_audio_codebooks(); ++c) {
+        const std::string name = "magpietts_prefill_batch_audio_tokens_" + std::to_string(c);
+        audio_tok_inputs[(size_t)c] = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, audio_len);
+        ggml_set_name(audio_tok_inputs[(size_t)c], name.c_str());
+        ggml_set_input(audio_tok_inputs[(size_t)c]);
+        i32_inputs.push_back({name, stacked[(size_t)c]});
+    }
+    ggml_tensor* ctx_emb = ggml_reshape_3d(
+        ctx, ggml_get_rows(ctx, model.baked_context, speakers), E, h.baked_context_length, B);
+    ggml_tensor* audio_emb = ggml_repeat_4d(
+        ctx, build_audio_embedding(ctx, model, audio_tok_inputs), E, audio_len, B, 1);
+    ggml_tensor* x = ggml_concat(ctx, ctx_emb, audio_emb, 1);
+    ggml_tensor* pos = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, T);
+    ggml_set_name(pos, "magpietts_prefill_batch_positions");
+    ggml_set_input(pos);
+    i32_inputs.push_back({"magpietts_prefill_batch_positions", positions_range(0, T)});
+    x = ggml_add(ctx, x, ggml_get_rows(ctx, tr.pos_emb, pos));
+    x = ggml_reshape_2d(ctx, x, E, (int64_t)T * B);
+
+    // text memory padded to the longest row -> [E, Lmax * B], with an additive mask over the
+    // padding and the rows' attention priors ([Lmax, 1, 1, B])
+    std::vector<ggml_tensor*> texts;
+    for (const MagpieDecoderPrefillRow& r : rows) {
+        ggml_tensor* t = ggml_view_2d(
+            ctx, r.text_device->tensor, E, r.text_len, r.text_device->tensor->nb[1], 0);
+        t = ggml_cont(ctx, t);
+        if (r.text_len < Lmax) {
+            t = ggml_pad(ctx, t, 0, Lmax - r.text_len, 0, 0);
+        }
+        texts.push_back(ggml_reshape_3d(ctx, t, E, Lmax, 1));
+    }
+    while (texts.size() > 1) {
+        std::vector<ggml_tensor*> next;
+        for (size_t i = 0; i < texts.size(); i += 2)
+            next.push_back(
+                i + 1 < texts.size() ? ggml_concat(ctx, texts[i], texts[i + 1], 2) : texts[i]);
+        texts.swap(next);
+    }
+    ggml_tensor* memory = ggml_reshape_2d(ctx, texts[0], E, (int64_t)Lmax * B);
+    std::vector<float> mask_data((size_t)Lmax * B, 0.0f), prior_data;
+    if (any_prior) {
+        prior_data.assign((size_t)Lmax * B, 1.0f);
+    }
+    for (int b = 0; b < B; ++b) {
+        for (int j = rows[(size_t)b].text_len; j < Lmax; ++j)
+            mask_data[(size_t)b * Lmax + j] = -1.0e30f;
+        if (rows[(size_t)b].prior) {
+            std::copy(
+                rows[(size_t)b].prior->begin(), rows[(size_t)b].prior->end(),
+                prior_data.begin() + (size_t)b * Lmax);
+        }
+    }
+    ggml_tensor* mask = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, Lmax, 1, 1, B);
+    ggml_set_name(mask, "magpietts_prefill_batch_text_mask");
+    ggml_set_input(mask);
+    f32_inputs.push_back({"magpietts_prefill_batch_text_mask", mask_data});
+    ggml_tensor* prior = nullptr;
+    if (any_prior) {
+        prior = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, Lmax, 1, 1, B);
+        ggml_set_name(prior, "magpietts_prefill_batch_prior");
+        ggml_set_input(prior);
+        f32_inputs.push_back({"magpietts_prefill_batch_prior", prior_data});
+    }
+
+    ggml_tensor* causal = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, T, T);
+    ggml_set_name(causal, "magpietts_prefill_batch_causal_mask");
+    ggml_set_input(causal);
+    std::vector<float> causal_data((size_t)T * T, 0.0f);
+    for (int q = 0; q < T; ++q)
+        for (int k = q + 1; k < T; ++k) causal_data[(size_t)q * T + k] = -INFINITY;
+    f32_inputs.push_back({"magpietts_prefill_batch_causal_mask", causal_data});
+    auto copy_into = [&](ggml_tensor* src, ggml_tensor* dst) {
+        ggml_build_forward_expand(gf, ggml_cpy(ctx, src, dst));
+    };
+    const size_t self_row0 = (size_t)(targets.cache_len - T) * E * f;
+    ggml_tensor* alignment_sum = nullptr;
+    int alignment_count = 0;
+    for (int il = 0; il < (int)tr.layers.size(); ++il) {
+        const magpietts_layer& layer = tr.layers[(size_t)il];
+        ggml_tensor* arena = targets.self_arena[(size_t)il];
+
+        // causal self-attention within each row's T tokens
+        ggml_tensor* residual = x;
+        ggml_tensor* cur = layer_norm(ctx, x, layer.norm_self);
+        ggml_tensor* qkv = linear(ctx, layer.self_qkv, cur);
+        const size_t esz = ggml_element_size(qkv);
+        ggml_tensor* qcur = ggml_view_2d(ctx, qkv, E, (int64_t)T * B, qkv->nb[1], 0);
+        ggml_tensor* kcur = ggml_view_2d(ctx, qkv, E, (int64_t)T * B, qkv->nb[1], esz * E);
+        ggml_tensor* vcur = ggml_view_2d(ctx, qkv, E, (int64_t)T * B, qkv->nb[1], esz * E * 2);
+        for (int b = 0; b < B; ++b) {
+            const MagpieDecoderPrefillRow& r = rows[(size_t)b];
+            for (int plane = 0; plane < 2; ++plane) {
+                ggml_tensor* src = ggml_view_2d(
+                    ctx, qkv, E, T, qkv->nb[1], (size_t)b * T * qkv->nb[1] + esz * E * (1 + plane));
+                // same 2-D shape as the strided source, so the copy is one cudaMemcpy2DAsync
+                copy_into(
+                    src,
+                    ggml_view_2d(
+                        ctx, arena, E, T, E * f,
+                        plane * arena->nb[2] + (size_t)r.cond_lane * arena->nb[1] + self_row0));
+                if (cfg) {
+                    ggml_tensor* usrc = ggml_view_1d(
+                        ctx, plane == 0 ? uc.k : uc.v, (int64_t)T * E, (size_t)il * T * E * f);
+                    copy_into(
+                        usrc, ggml_view_1d(
+                                  ctx, arena, (int64_t)T * E,
+                                  plane * arena->nb[2] + (size_t)r.uncond_lane * arena->nb[1] +
+                                      self_row0));
+                }
+            }
+        }
+        ggml_tensor* q =
+            ggml_permute(ctx, ggml_cont_4d(ctx, qcur, d_head, n_head, T, B), 0, 2, 1, 3);
+        ggml_tensor* k =
+            ggml_permute(ctx, ggml_cont_4d(ctx, kcur, d_head, n_head, T, B), 0, 2, 1, 3);
+        ggml_tensor* kq = ggml_mul_mat(ctx, k, q);  // [T, T, n_head, B]
+        // scale + causal mask + softmax in one kernel (the mask broadcasts over heads and rows)
+        kq = ggml_soft_max_ext(ctx, kq, causal, 1.0f / std::sqrt((float)d_head), 0.0f);
+        ggml_tensor* v_trans = ggml_cont_4d(
+            ctx, ggml_permute(ctx, ggml_cont_4d(ctx, vcur, d_head, n_head, T, B), 1, 2, 0, 3), T,
+            d_head, n_head, B);
+        ggml_tensor* kqv = ggml_mul_mat(ctx, v_trans, kq);  // [d_head, T, n_head, B]
+        cur = ggml_cont_2d(ctx, ggml_permute(ctx, kqv, 0, 2, 1, 3), E, (int64_t)T * B);
+        x = ggml_add(ctx, residual, linear(ctx, layer.self_o, cur));
+
+        // cross-attention to each row's own text
+        if (layer.has_cross) {
+            residual = x;
+            cur = layer_norm(ctx, x, layer.norm_xattn_query);
+            ggml_tensor* qx = linear(ctx, layer.cross_q, cur);
+            ggml_tensor* kvx =
+                linear(ctx, layer.cross_kv, layer_norm(ctx, memory, layer.norm_xattn_memory));
+            const size_t xsz = ggml_element_size(kvx);
+            ggml_tensor* kx = ggml_view_2d(ctx, kvx, cd, (int64_t)Lmax * B, kvx->nb[1], 0);
+            ggml_tensor* vx = ggml_view_2d(ctx, kvx, cd, (int64_t)Lmax * B, kvx->nb[1], xsz * cd);
+            for (int b = 0; b < B; ++b) {
+                const MagpieDecoderPrefillRow& r = rows[(size_t)b];
+                for (int plane = 0; plane < 2; ++plane) {
+                    ggml_tensor* dst_arena = plane == 0 ? targets.cross_k : targets.cross_v;
+                    ggml_tensor* src = ggml_view_2d(
+                        ctx, kvx, cd, r.text_len, kvx->nb[1],
+                        (size_t)b * Lmax * kvx->nb[1] + xsz * cd * plane);
+                    copy_into(
+                        src, ggml_view_2d(
+                                 ctx, dst_arena, cd, r.text_len, cd * f,
+                                 (size_t)r.cross_slot * dst_arena->nb[2] +
+                                     (size_t)il * dst_arena->nb[1]));
+                }
+            }
+            ggml_tensor* qh = ggml_permute(ctx, ggml_cont_4d(ctx, qx, xd, xh, T, B), 0, 2, 1, 3);
+            ggml_tensor* kh = ggml_permute(ctx, ggml_cont_4d(ctx, kx, xd, xh, Lmax, B), 0, 2, 1, 3);
+            ggml_tensor* kqx = ggml_mul_mat(ctx, kh, qh);  // [Lmax, T, xh, B]
+            kqx = ggml_scale(ctx, kqx, 1.0f / std::sqrt((float)xd));
+            ggml_tensor* p = ggml_soft_max(ctx, ggml_add(ctx, kqx, mask));
+            if (prior && tr.apply_attention_prior && layer_selected(tr.apply_prior_to_layers, il)) {
+                p = ggml_mul(ctx, p, ggml_repeat(ctx, prior, p));
+                p = ggml_div(ctx, p, ggml_repeat(ctx, ggml_sum_rows(ctx, p), p));
+            }
+            if (any_alignment && layer_selected(tr.estimate_alignment_from_layers, il)) {
+                // the last query row of every row: [Lmax, xh, B], summed over the heads
+                ggml_tensor* last = ggml_cont(
+                    ctx, ggml_view_3d(
+                             ctx, p, Lmax, xh, B, p->nb[2], p->nb[3], (size_t)(T - 1) * p->nb[1]));
+                ggml_tensor* summed = ggml_reshape_2d(ctx, last, Lmax, xh * B);
+                if (xh > 1) {
+                    summed =
+                        ggml_sum_rows(ctx, ggml_cont(ctx, ggml_permute(ctx, last, 1, 0, 2, 3)));
+                }
+                summed = ggml_reshape_2d(ctx, ggml_cont(ctx, summed), Lmax, B);
+                alignment_sum = alignment_sum ? ggml_add(ctx, alignment_sum, summed) : summed;
+                alignment_count += (int)xh;
+            }
+            ggml_tensor* vh = ggml_cont_4d(
+                ctx, ggml_permute(ctx, ggml_cont_4d(ctx, vx, xd, xh, Lmax, B), 1, 2, 0, 3), Lmax,
+                xd, xh, B);
+            ggml_tensor* kqvx = ggml_mul_mat(ctx, vh, p);  // [xd, T, xh, B]
+            cur = ggml_cont_2d(ctx, ggml_permute(ctx, kqvx, 0, 2, 1, 3), cd, (int64_t)T * B);
+            x = ggml_add(ctx, residual, linear(ctx, layer.cross_o, cur));
+        }
+
+        residual = x;
+        cur = layer_norm(ctx, x, layer.norm_ff);
+        cur = causal_conv1d(ctx, cur, layer.ff_proj);
+        cur = ggml_gelu(ctx, cur);
+        cur = causal_conv1d(ctx, cur, layer.ff_out);
+        x = ggml_add(ctx, residual, cur);
+    }
+    if (tr.norm_out) {
+        x = layer_norm(ctx, x, tr.norm_out);
+    }
+    x = ggml_cast(ctx, x, GGML_TYPE_F32);
+    // every row's last token -> columns [0, B) of cond_hidden
+    ggml_tensor* last = ggml_view_2d(ctx, x, E, B, x->nb[1] * T, x->nb[1] * (T - 1));
+    copy_into(last, ggml_view_2d(ctx, cond_hidden.tensor, E, B, cond_hidden.tensor->nb[1], 0));
+    if (alignment_sum) {
+        alignment_sum = ggml_scale(ctx, alignment_sum, 1.0f / (float)alignment_count);
+        ggml_set_name(alignment_sum, "magpietts_prefill_batch_alignment");
+        ggml_set_output(alignment_sum);
+        ggml_build_forward_expand(gf, alignment_sum);
+    }
+    if (!compute_graph(model, ctx, gf, i32_inputs, f32_inputs, threads, keep_allocr, backend)) {
+        ggml_free(ctx);
+        return 0;
+    }
+    if (alignment_sum) {
+        std::vector<float> all((size_t)Lmax * B);
+        magpietts_backend_tensor_get_staged(
+            model, output_staging_, alignment_sum, all.data(), 0, all.size() * sizeof(float));
+        for (int b = 0; b < B; ++b) {
+            const MagpieDecoderPrefillRow& r = rows[(size_t)b];
+            if (r.alignment) {
+                r.alignment->assign(
+                    all.begin() + (size_t)b * Lmax, all.begin() + (size_t)b * Lmax + r.text_len);
+            }
+        }
+    }
+    ggml_free(ctx);
+    return T;
+}
+
 bool
 MagpieDecoder::completeAlignment(const magpietts_decoder_attention* attention) const {
 #if defined(MAGPIETTS_CUDA_SAMPLING)

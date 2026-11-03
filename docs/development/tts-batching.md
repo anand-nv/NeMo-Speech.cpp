@@ -66,8 +66,12 @@ same as the serial runtime's (`test_magpietts_batch_fused`,
 Otherwise (F16 models, CPU, other GPUs), steps run fixed-shape ggml graphs per
 batch-size bucket (`batch_decoder.*`, `batch_lt.*`). The decoder's cached
 attention uses `ggml_fused_attn_cached` over the slot arena, which also has a
-CPU implementation. Sampling then happens on the host with each request's own
-random generator. Results match the serial runtime to within floating-point
+CPU implementation. On CUDA every row of a local-transformer round is then
+sampled on the GPU by the fused path's sampler (counter-based draws from the
+request's seed and frame index, as in the serial CUDA runtime), and the sampled
+codes feed the next round on the device, so a frame's rounds run without a host
+round trip. On other backends sampling happens on the host with each request's
+own random generator. Results match the serial runtime to within floating-point
 noise, but not bit for bit.
 
 ## Architecture

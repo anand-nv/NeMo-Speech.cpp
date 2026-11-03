@@ -30,6 +30,18 @@ void magpietts_batch_fused_write_config(
     void* configs, int row, bool use_cfg, float cfg_scale, float temperature, int top_k,
     bool forbid_audio_eos, uint64_t seed, int frame_index);
 
+// One round of the batched ggml local transformer's sampling on the GPU: row r of
+// [0, rows) samples codebook `round` from its conditional logits (row r of `logits`, [vocab]
+// per lane) and, with CFG, its unconditional logits (row uncond_row0 + r), with configs[r]. The
+// arithmetic and the counter-based random draw are those of the fused local transformer. The
+// sampled code goes to codes[r * n_rounds + round], the greedy one to argmax[...], and the
+// sampled code also to next_input[r] (the next round's input, or nullptr). Asynchronous on
+// `stream`.
+bool magpietts_batch_sample_round(
+    cudaStream_t stream, const float* logits, int vocab, int rows, int uncond_row0,
+    const void* configs, int round, int n_rounds, int audio_codebook_size, int audio_eos_id,
+    int32_t* codes, int32_t* argmax, int32_t* next_input, char* error, size_t error_size);
+
 struct magpietts_batch_decoder_fused;
 
 struct magpietts_batch_decoder_fused_cache {
@@ -63,6 +75,8 @@ magpietts_batch_decoder_fused* magpietts_batch_decoder_fused_create(
     const magpietts_decoder_fused_weights& w, const magpietts_batch_decoder_fused_cache& cache,
     char* error, size_t error_size);
 void magpietts_batch_decoder_fused_free(magpietts_batch_decoder_fused* f);
+// Blocks of the persistent grid a step launches (all of them must be co-resident).
+int magpietts_batch_decoder_fused_grid(const magpietts_batch_decoder_fused* f);
 bool magpietts_batch_decoder_fused_step(
     magpietts_batch_decoder_fused* f, cudaStream_t stream,
     const magpietts_batch_decoder_fused_step_args& step, char* error, size_t error_size);
@@ -85,6 +99,7 @@ struct magpietts_batch_lt_fused_args {
 magpietts_batch_lt_fused* magpietts_batch_lt_fused_create(
     const magpietts_lt_fused_weights& w, char* error, size_t error_size);
 void magpietts_batch_lt_fused_free(magpietts_batch_lt_fused* f);
+int magpietts_batch_lt_fused_grid(const magpietts_batch_lt_fused* f);
 bool magpietts_batch_lt_fused_run(
     magpietts_batch_lt_fused* f, cudaStream_t stream, const magpietts_batch_lt_fused_args& args,
     char* error, size_t error_size);

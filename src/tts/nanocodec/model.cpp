@@ -6,12 +6,16 @@
 #include <array>
 #include <atomic>
 #include <cmath>
+#include <condition_variable>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <map>
+#include <mutex>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -936,10 +940,21 @@ half_snake(ggml_context* ctx, ggml_tensor* x, const nc_activation& act) {
         std::exit(1);
     }
 
-    ggml_tensor* x_snake = ggml_view_3d(ctx, x, len, snake_channels, 1, x->nb[1], x->nb[2], 0);
+    // x is [len, channels, batch]
+    ggml_tensor* x_snake =
+        ggml_view_3d(ctx, x, len, snake_channels, x->ne[2], x->nb[1], x->nb[2], 0);
     ggml_tensor* x_lrelu = ggml_view_3d(
-        ctx, x, len, channels - snake_channels, 1, x->nb[1], x->nb[2], snake_channels * x->nb[1]);
+        ctx, x, len, channels - snake_channels, x->ne[2], x->nb[1], x->nb[2],
+        snake_channels * x->nb[1]);
 
+    if (x->ne[2] > 1) {
+        // A batch's channel slices are strided; the unary ops need contiguous inputs. The CUDA
+        // backend fuses this form like the unbatched one when the result does not partly overlap
+        // x, so x stays allocated until the end of the graph.
+        x_snake = ggml_cont(ctx, x_snake);
+        x_lrelu = ggml_cont(ctx, x_lrelu);
+        ggml_set_output(x);
+    }
     ggml_tensor* ax = ggml_mul(ctx, x_snake, act.alpha);
     ggml_tensor* periodic = ggml_sqr(ctx, ggml_sin(ctx, ax));
     periodic = ggml_mul(ctx, periodic, act.alpha_inv);
@@ -1776,6 +1791,203 @@ decode_eval_stream_all(
     return true;
 }
 
+
+// ---------------------------------------------------------------------------------------------
+// Batched streaming decode (NanoCodecBatchDecoder): the stream graph with a batch dimension. Each
+// streaming cache lives in a slot-indexed arena [len * channels, slots]; a batch gathers its
+// streams' rows (get_rows by slot id) and writes the updated history back (set_rows) at the end of
+// the graph. Every op runs a batch dimension with the serial graph's kernels, so each stream's
+// audio is bit-identical to decoding it alone.
+// ---------------------------------------------------------------------------------------------
+struct ncb_arena {
+    ggml_tensor* t = nullptr;  // F32 [len * channels, slots]
+    int64_t len = 0;
+    int64_t channels = 0;
+};
+
+struct ncb_state {
+    ggml_context* ctx = nullptr;             // arenas (no_alloc)
+    ggml_backend_buffer_t buffer = nullptr;  // their device buffer
+    std::vector<ncb_arena> conv, deconv;
+    int slots = 0;  // streams + 1 padding slot
+
+    ~ncb_state() {
+        if (buffer)
+            ggml_backend_buffer_free(buffer);
+        if (ctx)
+            ggml_free(ctx);
+    }
+};
+
+struct ncb_build {
+    ggml_context* ctx = nullptr;
+    ncb_state* st = nullptr;
+    ggml_tensor* slot_ids = nullptr;  // I32 [B]
+    int64_t B = 0;
+    size_t conv_pos = 0;
+    size_t deconv_pos = 0;
+    std::vector<ggml_tensor*> writebacks;
+};
+
+// The arena of the next cache of `kind` (created on the first graph build, before allocation).
+static ggml_tensor*
+ncb_arena_tensor(ncb_build& b, nc_stream_cache_kind kind, int64_t len, int64_t channels) {
+    std::vector<ncb_arena>& v = kind == NC_STREAM_CACHE_CONV ? b.st->conv : b.st->deconv;
+    const size_t index = kind == NC_STREAM_CACHE_CONV ? b.conv_pos++ : b.deconv_pos++;
+    if (index < v.size() && v[index].t) {
+        if (v[index].len != len || v[index].channels != channels) {
+            throw std::runtime_error("NanoCodec batch state shape mismatch between graphs");
+        }
+        return v[index].t;
+    }
+    if (b.st->buffer) {
+        throw std::runtime_error("NanoCodec batch state cannot grow after allocation");
+    }
+    if (index >= v.size()) {
+        v.resize(index + 1);
+    }
+    ggml_tensor* t = ggml_new_tensor_2d(b.st->ctx, GGML_TYPE_F32, len * channels, b.st->slots);
+    const std::string name =
+        std::string(
+            kind == NC_STREAM_CACHE_CONV ? "nanocodec_batch_conv_" : "nanocodec_batch_deconv_") +
+        std::to_string(index);
+    ggml_set_name(t, name.c_str());
+    v[index] = {t, len, channels};
+    return t;
+}
+
+// The batch's rows of an arena as [len, channels, B].
+static ggml_tensor*
+ncb_gather(ncb_build& b, ggml_tensor* arena, int64_t len, int64_t channels) {
+    return ggml_reshape_3d(b.ctx, ggml_get_rows(b.ctx, arena, b.slot_ids), len, channels, b.B);
+}
+
+// Write `next` ([len, channels, B], possibly strided) back to the batch's rows of the arena.
+static void
+ncb_writeback(ncb_build& b, ggml_tensor* arena, ggml_tensor* next) {
+    ggml_tensor* rows = ggml_reshape_2d(b.ctx, ggml_cont(b.ctx, next), arena->ne[0], b.B);
+    b.writebacks.push_back(ggml_set_rows(b.ctx, arena, rows, b.slot_ids));
+}
+
+// History for the next chunk: the last `pad` columns of [cache | x].
+static ggml_tensor*
+ncb_next_history(ggml_context* ctx, ggml_tensor* x, ggml_tensor* cache, int64_t pad) {
+    const int64_t T = x->ne[0], C = x->ne[1], B = x->ne[2];
+    if (T >= pad) {
+        return ggml_view_3d(ctx, x, pad, C, B, x->nb[1], x->nb[2], (size_t)(T - pad) * x->nb[0]);
+    }
+    ggml_tensor* kept = ggml_view_3d(
+        ctx, cache, pad - T, C, B, cache->nb[1], cache->nb[2], (size_t)T * cache->nb[0]);
+    return ggml_concat(ctx, kept, x, 0);
+}
+
+#if defined(NEMO_SPEECH_GGML_PATCHED)
+static ggml_tensor*
+ncb_conv1d_act(ncb_build& b, ggml_tensor* x, const nc_activation* act, const nc_conv& conv) {
+    const int kernel = (int)conv.w->ne[0];
+    const int left_pad = (kernel - 1) * conv.dilation;
+    const int64_t C = x->ne[1];
+    ggml_tensor* arena = nullptr;
+    ggml_tensor* cache = nullptr;
+    if (left_pad > 0) {
+        arena = ncb_arena_tensor(b, NC_STREAM_CACHE_CONV, left_pad, C);
+        cache = ncb_gather(b, arena, left_pad, C);
+    }
+    const int snake_channels = act ? (int)act->alpha->ne[1] : 0;
+    ggml_tensor* y = ggml_conv1d_fused(
+        b.ctx, x, cache, conv.w_packed, conv.b, act ? act->alpha : nullptr,
+        act ? act->alpha_inv : nullptr, kernel, conv.dilation, (int)conv.w->ne[2], snake_channels,
+        0.01f);
+    if (cache) {
+        ncb_writeback(b, arena, ncb_next_history(b.ctx, x, cache, left_pad));
+    }
+    return y;
+}
+
+static ggml_tensor*
+ncb_grouped_conv(
+    ncb_build& b, ggml_tensor* x, bool shared_input, const nc_grouped_conv& gc,
+    ggml_tensor* residual, bool residual_shared) {
+    int max_pad = 0;
+    for (int g = 0; g < gc.groups; ++g) max_pad = std::max(max_pad, (gc.K[g] - 1) * gc.d[g]);
+    const int64_t C = x->ne[1];
+    ggml_tensor* arena = nullptr;
+    ggml_tensor* cache = nullptr;
+    if (max_pad > 0) {
+        arena = ncb_arena_tensor(b, NC_STREAM_CACHE_CONV, max_pad, C);
+        cache = ncb_gather(b, arena, max_pad, C);
+    }
+    ggml_tensor* y = ggml_conv1d_fused_grouped(
+        b.ctx, x, cache, gc.w, gc.b, gc.alpha, gc.alpha_inv, residual, gc.groups, gc.K, gc.d,
+        gc.cout, gc.snake, 0.01f, shared_input, residual_shared);
+    if (cache) {
+        ncb_writeback(b, arena, ncb_next_history(b.ctx, x, cache, max_pad));
+    }
+    return y;
+}
+
+static ggml_tensor*
+ncb_reslayer(ncb_build& b, ggml_tensor* x, const nc_res_layer& layer) {
+    const int64_t T = x->ne[0], C = x->ne[1], B = x->ne[2];
+    ggml_tensor* y3 = nullptr;
+    for (size_t d = 0; d < layer.grouped_in.size(); ++d) {
+        ggml_tensor* a = ncb_grouped_conv(
+            b, d == 0 ? x : y3, /*shared_input=*/d == 0, layer.grouped_in[d], nullptr, false);
+        y3 = ncb_grouped_conv(
+            b, a, false, layer.grouped_skip[d], d == 0 ? x : y3, /*residual_shared=*/d == 0);
+    }
+    const int G = layer.grouped_in[0].groups;
+    ggml_tensor* sum = nullptr;
+    for (int g = 0; g < G; ++g) {
+        ggml_tensor* part =
+            ggml_view_3d(b.ctx, y3, T, C, B, y3->nb[1], y3->nb[2], (size_t)g * C * y3->nb[1]);
+        sum = sum ? ggml_add(b.ctx, sum, part) : part;
+    }
+    return ggml_scale(b.ctx, sum, 1.0f / (float)G);
+}
+#endif
+
+// Transposed convolution of a batch: ggml_conv_transpose_1d with a batch dimension (the serial
+// path's kernel, bit-identical per stream), then the streaming tail as in the serial graph.
+static ggml_tensor*
+ncb_conv_transpose(ncb_build& b, ggml_tensor* x, const nc_conv& conv) {
+    ggml_context* ctx = b.ctx;
+    const int64_t T = x->ne[0], B = x->ne[2];
+    const int64_t cout = conv.w->ne[1];
+    const int64_t out_len = T * conv.stride;
+    ggml_tensor* full = nc_conv_transpose_full(ctx, conv, x);  // [(T - 1) * s + K, cout, B]
+    const int64_t tail_len = full->ne[0] - out_len;
+
+    ggml_tensor* current = nullptr;
+    if (tail_len > 0) {
+        ggml_tensor* arena = ncb_arena_tensor(b, NC_STREAM_CACHE_DECONV, tail_len, cout);
+        ggml_tensor* prev_tail = ncb_gather(b, arena, tail_len, cout);
+        const int64_t add_len = std::min<int64_t>(tail_len, out_len);
+        ggml_tensor* prefix =
+            ggml_view_3d(ctx, full, add_len, cout, B, full->nb[1], full->nb[2], 0);
+        ggml_tensor* prev_prefix = prev_tail;
+        if (add_len != tail_len) {
+            prev_prefix = ggml_view_3d(
+                ctx, prev_tail, add_len, cout, B, prev_tail->nb[1], prev_tail->nb[2], 0);
+        }
+        prefix = ggml_add(ctx, prefix, prev_prefix);
+        if (out_len > add_len) {
+            ggml_tensor* suffix = ggml_view_3d(
+                ctx, full, out_len - add_len, cout, B, full->nb[1], full->nb[2],
+                (size_t)add_len * full->nb[0]);
+            current = ggml_concat(ctx, prefix, suffix, 0);
+        } else {
+            current = prefix;
+        }
+        ggml_tensor* next_tail = ggml_view_3d(
+            ctx, full, tail_len, cout, B, full->nb[1], full->nb[2], (size_t)out_len * full->nb[0]);
+        ncb_writeback(b, arena, next_tail);
+    } else {
+        current = ggml_view_3d(ctx, full, out_len, cout, B, full->nb[1], full->nb[2], 0);
+    }
+    return ggml_add(ctx, current, conv.b);
+}
+
 namespace nemo_speech::tts::nanocodec {
 
 namespace {
@@ -2022,6 +2234,367 @@ NanoCodecDecoder::decodeStreamAll(
         return false;
     }
     return decode_eval_stream_all(model_->impl_->model, frames, chunk_frames, threads, audio);
+}
+
+
+struct NanoCodecBatchDecoder::Impl {
+    struct Job {
+        int slot = -1;
+        const NanoCodecFrames* frames = nullptr;
+        std::vector<float>* audio = nullptr;
+        bool done = false;
+        bool ok = false;
+    };
+    // One persistent graph per (chunk frames, batch bucket).
+    struct Graph {
+        ggml_context* ctx = nullptr;
+        ggml_cgraph* gf = nullptr;
+        ggml_gallocr_t allocr = nullptr;
+        ggml_tensor* latent = nullptr;    // [frames, latent_dim, bucket]
+        ggml_tensor* slot_ids = nullptr;  // I32 [bucket]
+        ggml_tensor* audio = nullptr;     // [frames * samples_per_frame, 1, bucket]
+        ~Graph() {
+            if (allocr)
+                ggml_gallocr_free(allocr);
+            if (ctx)
+                ggml_free(ctx);
+        }
+    };
+
+    const NanoCodecModel& owner;
+    int max_streams = 0;
+    int max_chunk_frames = 0;
+    ggml_backend_t backend = nullptr;  // own stream
+    ncb_state state;
+    std::vector<int> buckets;
+    std::map<std::pair<int, int>, std::unique_ptr<Graph>> graphs;
+    std::vector<float> latent_host, audio_host;
+    std::vector<int32_t> slot_host;
+
+    std::mutex mutex;  // queue, slots, fresh
+    std::condition_variable has_work, job_done;
+    std::vector<Job*> queue;
+    std::vector<bool> in_use, fresh;  // fresh: history must be zeroed before the next chunk
+    bool stopping = false;
+    std::thread thread;
+
+    Impl(const NanoCodecModel& m, int streams, int chunk)
+        : owner(m), max_streams(std::max(1, streams)), max_chunk_frames(std::max(1, chunk)) {}
+    ~Impl() {
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            stopping = true;
+        }
+        has_work.notify_all();
+        if (thread.joinable())
+            thread.join();
+        graphs.clear();
+        if (backend)
+            ggml_backend_free(backend);
+    }
+
+    const nc_model& model() const { return owner.impl_->model; }
+
+    bool supported(std::string* why) const {
+#if !defined(GGML_USE_CUDA) || !defined(NEMO_SPEECH_GGML_PATCHED)
+        *why = "needs CUDA and the patched ggml series";
+        return false;
+#else
+        const nc_model& m = model();
+        if (!m.backend || !ggml_backend_is_cuda(m.backend) || !m.fused_conv) {
+            *why = "needs the fused CUDA convolutions";
+            return false;
+        }
+        if (!m.pre_conv.w_packed || !m.post_conv.w_packed) {
+            *why = "unpacked input/output convolution";
+            return false;
+        }
+        for (const nc_res_layer& layer : m.res_layers) {
+            if (!layer.grouped) {
+                *why = "ungrouped residual layer";
+                return false;
+            }
+        }
+        for (const nc_conv& c : m.up_convs) {
+            if (c.wt_cpu) {
+                *why = "CPU transposed convolutions";
+                return false;
+            }
+        }
+        return true;
+#endif
+    }
+
+    Graph* graph(int frames, int bucket) {
+        auto& g = graphs[{frames, bucket}];
+        if (g) {
+            return g.get();
+        }
+#if defined(NEMO_SPEECH_GGML_PATCHED)
+        const nc_model& m = model();
+        const nc_hparams& h = m.hparams;
+        auto ng = std::make_unique<Graph>();
+        ng->ctx = new_graph_context();
+        if (!ng->ctx) {
+            return nullptr;
+        }
+        ncb_build b;
+        b.ctx = ng->ctx;
+        b.st = &state;
+        b.B = bucket;
+        ng->latent = ggml_new_tensor_3d(ng->ctx, GGML_TYPE_F32, frames, h.latent_dim, bucket);
+        ggml_set_name(ng->latent, "nanocodec_batch_latent");
+        ggml_set_input(ng->latent);
+        ng->slot_ids = ggml_new_tensor_1d(ng->ctx, GGML_TYPE_I32, bucket);
+        ggml_set_name(ng->slot_ids, "nanocodec_batch_slots");
+        ggml_set_input(ng->slot_ids);
+        b.slot_ids = ng->slot_ids;
+        try {
+            ggml_tensor* x = ncb_conv1d_act(b, ng->latent, nullptr, m.pre_conv);
+            for (size_t i = 0; i < h.up_rates.size(); ++i) {
+                x = half_snake(ng->ctx, x, m.activations[i]);
+                x = ncb_conv_transpose(b, x, m.up_convs[i]);
+                x = ncb_reslayer(b, x, m.res_layers[i]);
+            }
+            x = ncb_conv1d_act(b, x, &m.post_activation, m.post_conv);
+            ggml_set_name(x, "nanocodec_batch_audio");
+            ggml_set_output(x);
+            ng->audio = x;
+        }
+        catch (const std::exception& e) {
+            fprintf(stderr, "NanoCodec batch graph: %s\n", e.what());
+            return nullptr;
+        }
+        ng->gf = ggml_new_graph_custom(ng->ctx, NANO_CODEC_MAX_NODES, false);
+        // the audio path (every reader of a history) before the writebacks that replace it
+        ggml_build_forward_expand(ng->gf, ng->audio);
+        for (ggml_tensor* wb : b.writebacks) ggml_build_forward_expand(ng->gf, wb);
+        tag_graph_first_node(ng->gf);
+        if (!state.buffer) {
+            // the first graph created every arena: allocate and zero them
+            state.buffer = ggml_backend_alloc_ctx_tensors(state.ctx, m.backend);
+            if (!state.buffer) {
+                fprintf(stderr, "NanoCodec batch: state allocation failed\n");
+                return nullptr;
+            }
+            ggml_backend_buffer_clear(state.buffer, 0);
+        }
+        ng->allocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
+        if (!ng->allocr || !ggml_gallocr_alloc_graph(ng->allocr, ng->gf)) {
+            fprintf(stderr, "NanoCodec batch: graph allocation failed\n");
+            return nullptr;
+        }
+        g = std::move(ng);
+        return g.get();
+#else
+        (void)frames;
+        (void)bucket;
+        return nullptr;
+#endif
+    }
+
+    int bucketFor(int n) const {
+        for (int b : buckets)
+            if (b >= n)
+                return b;
+        return buckets.back();
+    }
+
+    void clearSlot(int slot) {
+        for (auto* v : {&state.conv, &state.deconv}) {
+            for (const ncb_arena& a : *v) {
+                if (a.t)
+                    ggml_backend_tensor_memset(a.t, 0, (size_t)slot * a.t->nb[1], a.t->nb[1]);
+            }
+        }
+    }
+
+    // One batched decode of jobs that all have `frames` frames (at most the largest bucket).
+    void runBatch(const std::vector<Job*>& jobs, int frames) {
+        const nc_hparams& h = model().hparams;
+        const int n = (int)jobs.size();
+        const int bucket = bucketFor(n);
+        Graph* g = graph(frames, bucket);
+        bool ok = g != nullptr;
+        if (ok) {
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                for (Job* j : jobs) {
+                    if (fresh[(size_t)j->slot]) {
+                        clearSlot(j->slot);
+                        fresh[(size_t)j->slot] = false;
+                    }
+                }
+            }
+            const size_t per = (size_t)frames * h.latent_dim;
+            latent_host.assign(per * bucket, 0.0f);
+            slot_host.assign((size_t)bucket, max_streams);  // padding rows use the spare slot
+            std::vector<float> one;
+            for (int i = 0; i < n && ok; ++i) {
+                try {
+                    dequantize_tokens_into(h, *jobs[(size_t)i]->frames, frames, one);
+                }
+                catch (const std::exception& e) {
+                    fprintf(stderr, "NanoCodec batch: %s\n", e.what());
+                    jobs[(size_t)i]->ok = false;
+                    jobs[(size_t)i]->done = true;  // decoded below with a silent row
+                    one.assign(per, 0.0f);
+                }
+                std::copy(one.begin(), one.end(), latent_host.begin() + (ptrdiff_t)(per * i));
+                slot_host[(size_t)i] = jobs[(size_t)i]->slot;
+            }
+            ggml_backend_tensor_set(
+                g->latent, latent_host.data(), 0, latent_host.size() * sizeof(float));
+            ggml_backend_tensor_set(
+                g->slot_ids, slot_host.data(), 0, slot_host.size() * sizeof(int32_t));
+            {
+                const ggml_nvtx::range nvtx_compute("nanocodec_batch_graph_compute");
+                ok = ggml_backend_graph_compute(backend, g->gf) == GGML_STATUS_SUCCESS;
+            }
+            if (ok) {
+                audio_host.resize((size_t)ggml_nelements(g->audio));
+                ggml_backend_tensor_get(
+                    g->audio, audio_host.data(), 0, audio_host.size() * sizeof(float));
+            }
+        }
+        const size_t samples = ok ? (size_t)g->audio->ne[0] : 0;
+        std::lock_guard<std::mutex> lock(mutex);
+        for (int i = 0; i < n; ++i) {
+            Job* j = jobs[(size_t)i];
+            if (j->done) {  // failed to dequantize
+                fresh[(size_t)j->slot] = true;
+                continue;
+            }
+            j->ok = ok;
+            if (ok) {
+                j->audio->assign(
+                    audio_host.begin() + (ptrdiff_t)(samples * i),
+                    audio_host.begin() + (ptrdiff_t)(samples * (i + 1)));
+                if (!is_finite_audio(*j->audio)) {
+                    fprintf(stderr, "NanoCodec batch: non-finite audio in slot %d\n", j->slot);
+                    j->ok = false;
+                }
+            }
+            if (!j->ok) {
+                fresh[(size_t)j->slot] = true;  // the history now holds this chunk
+            }
+            j->done = true;
+        }
+    }
+
+    void loop() {
+        for (;;) {
+            std::vector<Job*> jobs;
+            {
+                std::unique_lock<std::mutex> lock(mutex);
+                has_work.wait(lock, [&] { return stopping || !queue.empty(); });
+                if (queue.empty()) {
+                    return;  // stopping
+                }
+                jobs.swap(queue);  // everything submitted while the last batch ran
+            }
+            const ggml_nvtx::range nvtx_range("nanocodec_batch_decode");
+            std::map<int, std::vector<Job*>> by_frames;
+            for (Job* j : jobs) by_frames[(int)j->frames->size()].push_back(j);
+            for (auto& [frames, group] : by_frames) {
+                const size_t cap = (size_t)buckets.back();
+                for (size_t start = 0; start < group.size(); start += cap) {
+                    const std::vector<Job*> part(
+                        group.begin() + (ptrdiff_t)start,
+                        group.begin() + (ptrdiff_t)std::min(group.size(), start + cap));
+                    runBatch(part, frames);
+                }
+            }
+            job_done.notify_all();
+        }
+    }
+};
+
+NanoCodecBatchDecoder::NanoCodecBatchDecoder(
+    const NanoCodecModel& model, int max_streams, int max_chunk_frames)
+    : impl_(std::make_unique<Impl>(model, max_streams, max_chunk_frames)) {}
+
+NanoCodecBatchDecoder::~NanoCodecBatchDecoder() = default;
+
+bool
+NanoCodecBatchDecoder::init(std::string* error) {
+    std::string why;
+    auto fail = [&](const std::string& msg) {
+        if (error)
+            *error = msg;
+        return false;
+    };
+    if (!require_loaded(&impl_->owner)) {
+        return fail("NanoCodec model is not loaded");
+    }
+    if (!impl_->supported(&why)) {
+        return fail(why);
+    }
+    impl_->backend = impl_->owner.createComputeBackend();
+    if (!impl_->backend) {
+        return fail("no compute backend for the batched codec");
+    }
+#if defined(GGML_USE_CUDA) && defined(NEMO_SPEECH_GGML_PATCHED)
+    // Batched launches grow the fused convolutions' split-K scratch, which CUDA graph capture
+    // cannot follow; one batch serves many streams, so its launches are cheap enough uncaptured.
+    ggml_backend_cuda_set_graphs_enabled(impl_->backend, false);
+#endif
+    impl_->state.slots = impl_->max_streams + 1;
+    ggml_init_params params = {ggml_tensor_overhead() * NC_STREAM_MAX_STATE_TENSORS, nullptr, true};
+    impl_->state.ctx = ggml_init(params);
+    for (int b = 1; b < impl_->max_streams; b *= 2) impl_->buckets.push_back(b);
+    impl_->buckets.push_back(impl_->max_streams);
+    impl_->in_use.assign((size_t)impl_->max_streams, false);
+    impl_->fresh.assign((size_t)impl_->max_streams + 1, true);
+    // the first graph creates and allocates the state arenas
+    if (!impl_->graph(impl_->max_chunk_frames, 1)) {
+        return fail("graph construction failed");
+    }
+    impl_->thread = std::thread(&Impl::loop, impl_.get());
+    return true;
+}
+
+int
+NanoCodecBatchDecoder::acquire() {
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    for (int s = 0; s < impl_->max_streams; ++s) {
+        if (!impl_->in_use[(size_t)s]) {
+            impl_->in_use[(size_t)s] = true;
+            impl_->fresh[(size_t)s] = true;
+            return s;
+        }
+    }
+    return -1;
+}
+
+void
+NanoCodecBatchDecoder::release(int slot) {
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    if (slot >= 0 && slot < impl_->max_streams) {
+        impl_->in_use[(size_t)slot] = false;
+    }
+}
+
+bool
+NanoCodecBatchDecoder::decode(int slot, const NanoCodecFrames& frames, std::vector<float>& audio) {
+    if (frames.empty()) {
+        audio.clear();
+        return true;
+    }
+    if (slot < 0 || slot >= impl_->max_streams || (int)frames.size() > impl_->max_chunk_frames) {
+        fprintf(
+            stderr, "NanoCodec batch: invalid chunk (slot %d, %zu frames)\n", slot, frames.size());
+        return false;
+    }
+    Impl::Job job;
+    job.slot = slot;
+    job.frames = &frames;
+    job.audio = &audio;
+    std::unique_lock<std::mutex> lock(impl_->mutex);
+    impl_->queue.push_back(&job);
+    impl_->has_work.notify_one();
+    impl_->job_done.wait(lock, [&] { return job.done; });
+    return job.ok;
 }
 
 }  // namespace nemo_speech::tts::nanocodec

@@ -39,7 +39,11 @@ MagpieBatchEngine::init(std::string* error) {
         return false;
     }
     backend_ = std::move(backend);
-    factory_ = std::make_unique<MagpieBatchRequestFactory>(magpie_, codec_);
+    // A request keeps decoding audio after it leaves the decoder batch, while its decoder slot
+    // already serves the next request: the codec has twice the slots.
+    factory_ = std::make_unique<MagpieBatchRequestFactory>(
+        magpie_, codec_, config_.codec_batching ? 2 * config_.max_slots : 0,
+        config_.codec_chunk_frames);
     scheduler_ = std::make_unique<MagpieBatchScheduler>(*backend_, config_);
     scheduler_->start();
     return true;

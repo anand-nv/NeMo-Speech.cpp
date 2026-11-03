@@ -16,6 +16,7 @@ MagpieBatchScheduler::MagpieBatchScheduler(
       slot_owner_(static_cast<size_t>(std::max(0, config.max_slots)), 0) {
     config_.max_prefills_per_iter = std::max(1, config_.max_prefills_per_iter);
     config_.max_decode_steps_before_prefill = std::max(0, config_.max_decode_steps_before_prefill);
+    config_.prefill_batch_size = std::max(1, config_.prefill_batch_size);
 }
 
 MagpieBatchScheduler::~MagpieBatchScheduler() {
@@ -26,6 +27,9 @@ void
 MagpieBatchScheduler::start() {
     if (thread_.joinable() || stopping_) {
         return;
+    }
+    if (asyncPrefill()) {
+        prefill_thread_ = std::thread(&MagpieBatchScheduler::prefillLoop, this);
     }
     thread_ = std::thread(&MagpieBatchScheduler::loop, this);
 }
@@ -38,6 +42,11 @@ MagpieBatchScheduler::stop() {
     wake_.notify_all();
     if (thread_.joinable()) {
         thread_.join();
+    }
+    { std::lock_guard<std::mutex> lock(prefill_mutex_); }
+    prefill_cv_.notify_all();
+    if (prefill_thread_.joinable()) {
+        prefill_thread_.join();  // a running prefill completes first
     }
     // Fail whatever is left: never-admitted requests just report failure, admitted ones stop
     // their audio output.
@@ -146,7 +155,8 @@ MagpieBatchScheduler::dropCancelled() {
     }
     const std::vector<EntryPtr> active = active_;
     for (const EntryPtr& e : active) {
-        if (e->cancel) {
+        // a request in a running prefill is failed when the prefill ends (its slot is in use)
+        if (e->cancel && e->phase != Phase::PrefillRunning) {
             fail(e);
         }
     }
@@ -289,6 +299,22 @@ MagpieBatchScheduler::runPrefills() {
         else if (e->phase == Phase::Decode)
             decoding = true;
     }
+    if (asyncPrefill()) {
+        // one prefill in flight on the prefill stream; decode steps continue meanwhile
+        JobState state;
+        {
+            std::lock_guard<std::mutex> lock(prefill_mutex_);
+            state = job_state_;
+        }
+        if (state == JobState::Done) {
+            finishPrefillJob();
+            return true;
+        }
+        if (state != JobState::None || pending.empty() || !prefillWindowClosed(pending.size())) {
+            return false;
+        }
+        return submitPrefillJob(pending);
+    }
     if (pending.empty()) {
         return false;
     }
@@ -296,6 +322,9 @@ MagpieBatchScheduler::runPrefills() {
     // decode steps while other requests are decoding, so it cannot stall them for long.
     if (decoding && decode_steps_since_prefill_ < config_.max_decode_steps_before_prefill) {
         return false;
+    }
+    if (config_.prefill_batch_size > 1 && !prefillWindowClosed(pending.size())) {
+        return false;  // keep collecting; decode steps continue meanwhile
     }
     decode_steps_since_prefill_ = 0;
     const auto t0 = std::chrono::steady_clock::now();
@@ -309,6 +338,10 @@ MagpieBatchScheduler::runPrefills() {
                     .count();
         }
     } add_time{this, t0};
+    if (config_.prefill_batch_size > 1) {
+        runPrefillBatch(pending);
+        return true;
+    }
     const int budget =
         std::min<int>(config_.max_prefills_per_iter, static_cast<int>(pending.size()));
     for (int i = 0; i < budget; ++i) {
@@ -347,6 +380,266 @@ MagpieBatchScheduler::runPrefills() {
         }
     }
     return true;
+}
+
+bool
+MagpieBatchScheduler::prefillWindowClosed(size_t pending) {
+    if (config_.prefill_wait_ms <= 0) {
+        return true;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    if (prefill_window_start_ == std::chrono::steady_clock::time_point{}) {
+        prefill_window_start_ = now;
+    }
+    // more requests can join while a slot is free or a request is queued for one
+    const bool can_grow = pool_.available() > 0 || !waiting_.empty();
+    if (static_cast<int>(pending) < config_.prefill_batch_size && can_grow &&
+        now - prefill_window_start_ < std::chrono::milliseconds(config_.prefill_wait_ms)) {
+        return false;
+    }
+    prefill_window_start_ = {};
+    return true;
+}
+
+void
+MagpieBatchScheduler::runPrefillBatch(const std::vector<EntryPtr>& pending) {
+    // up to prefill_batch_size waiting requests: their text chunks are prepared one by one, then
+    // prefilled together
+    const int budget = std::min<int>(config_.prefill_batch_size, static_cast<int>(pending.size()));
+    const bool defer = backend_.batchedEncoder();
+    std::vector<EntryPtr> begun;
+    std::vector<EntryPtr> encode;
+    std::vector<const std::vector<int32_t>*> windows;
+    std::vector<magpietts_backend_tensor*> encoded;
+    for (int i = 0; i < budget; ++i) {
+        const EntryPtr& e = pending[static_cast<size_t>(i)];
+        if (!(defer ? e->request->beginTextChunkDeferred() : e->request->beginTextChunk())) {
+            fail(e);
+            continue;
+        }
+        begun.push_back(e);
+        magpietts_backend_tensor* out = nullptr;
+        if (const std::vector<int32_t>* window = e->request->textWindowToEncode(&out)) {
+            encode.push_back(e);
+            windows.push_back(window);
+            encoded.push_back(out);
+        }
+    }
+    if (!encode.empty()) {
+        bool ok = false;
+        {
+            const ggml_nvtx::range nvtx_range("magpietts_batch_encode");
+            ok = backend_.encodeTexts(windows, encoded);
+        }
+        for (const EntryPtr& e : encode) {
+            if (ok) {
+                e->request->textEncoded();
+            } else {
+                fail(e);
+            }
+        }
+        if (!ok) {
+            fprintf(
+                stderr, "MagpieTTS batch: batched encoder pass of %zu requests failed\n",
+                encode.size());
+            begun.erase(
+                std::remove_if(
+                    begun.begin(), begun.end(),
+                    [&](const EntryPtr& e) {
+                        return std::find(encode.begin(), encode.end(), e) != encode.end();
+                    }),
+                begun.end());
+        }
+    }
+    std::vector<EntryPtr> batch;
+    std::vector<int> slots;
+    std::vector<const MagpieBatchRowInput*> rows;
+    for (const EntryPtr& e : begun) {
+        e->row = MagpieBatchRowInput{};
+        const IMagpieBatchRequest::Status st = e->request->prepareStep(e->row);
+        if (st == IMagpieBatchRequest::Status::Failed) {
+            fail(e);
+        } else if (st == IMagpieBatchRequest::Status::EndChunk) {
+            endChunk(e);
+        } else {
+            batch.push_back(e);
+            slots.push_back(e->slot);
+            rows.push_back(&e->row);
+        }
+    }
+    if (batch.empty()) {
+        return;
+    }
+    std::vector<MagpieBatchRowOutput> outs;
+    bool ok = false;
+    {
+        const ggml_nvtx::range nvtx_range("magpietts_batch_prefill");
+        ok = backend_.prefillBatch(slots, rows, outs) && outs.size() == batch.size();
+    }
+    if (!ok) {
+        fprintf(stderr, "MagpieTTS batch: batched prefill of %zu requests failed\n", batch.size());
+        for (const EntryPtr& e : batch) fail(e);
+        return;
+    }
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        stats_.prefills += batch.size();
+    }
+    for (size_t i = 0; i < batch.size(); ++i) {
+        const EntryPtr& e = batch[i];
+        const IMagpieBatchRequest::Status st = e->request->applyStep(outs[i]);
+        if (st == IMagpieBatchRequest::Status::Failed) {
+            fail(e);
+        } else if (st == IMagpieBatchRequest::Status::EndChunk) {
+            endChunk(e);
+        } else {
+            e->phase = Phase::Decode;
+        }
+    }
+}
+
+bool
+MagpieBatchScheduler::asyncPrefill() const {
+    return config_.prefill_stream && config_.prefill_batch_size > 1 && backend_.prefillStream();
+}
+
+bool
+MagpieBatchScheduler::submitPrefillJob(const std::vector<EntryPtr>& pending) {
+    // the requests' own steps run here, on the scheduler thread; the prefill thread only runs
+    // the GPU work of the job
+    const int budget = std::min<int>(config_.prefill_batch_size, static_cast<int>(pending.size()));
+    const bool defer = backend_.batchedEncoder();
+    auto job = std::make_unique<MagpieBatchPrefillJob>();
+    std::vector<EntryPtr> entries;
+    for (int i = 0; i < budget; ++i) {
+        const EntryPtr& e = pending[static_cast<size_t>(i)];
+        if (!(defer ? e->request->beginTextChunkDeferred() : e->request->beginTextChunk())) {
+            fail(e);
+            continue;
+        }
+        magpietts_backend_tensor* out = nullptr;
+        const std::vector<int32_t>* window = e->request->textWindowToEncode(&out);
+        if (window) {
+            e->request->textEncoded();  // the job encodes it before its prefill reads it
+        }
+        e->row = MagpieBatchRowInput{};
+        const IMagpieBatchRequest::Status st = e->request->prepareStep(e->row);
+        if (st == IMagpieBatchRequest::Status::Failed) {
+            fail(e);
+            continue;
+        }
+        if (st == IMagpieBatchRequest::Status::EndChunk) {
+            endChunk(e);
+            continue;
+        }
+        if (window) {
+            job->windows.push_back(window);
+            job->encoded.push_back(out);
+            e->row.text_cond_device = out;  // allocated by the job's encoder pass
+        }
+        job->slots.push_back(e->slot);
+        job->rows.push_back(&e->row);
+        entries.push_back(e);
+    }
+    if (entries.empty()) {
+        return true;
+    }
+    if (!backend_.prefillBegin(*job)) {
+        for (const EntryPtr& e : entries) fail(e);
+        return true;
+    }
+    for (const EntryPtr& e : entries) e->phase = Phase::PrefillRunning;
+    job_ = std::move(job);
+    job_entries_ = std::move(entries);
+    if (!prefill_thread_.joinable()) {
+        // manual mode (runOnce without start): compute inline
+        const bool ok = backend_.prefillCompute(*job_);
+        std::lock_guard<std::mutex> lock(prefill_mutex_);
+        job_ok_ = ok;
+        job_state_ = JobState::Done;
+        return true;
+    }
+    {
+        std::lock_guard<std::mutex> lock(prefill_mutex_);
+        job_state_ = JobState::Queued;
+    }
+    prefill_cv_.notify_all();
+    return true;
+}
+
+void
+MagpieBatchScheduler::prefillLoop() {
+    for (;;) {
+        {
+            std::unique_lock<std::mutex> lock(prefill_mutex_);
+            prefill_cv_.wait(lock, [&] { return stopping_ || job_state_ == JobState::Queued; });
+            if (job_state_ != JobState::Queued) {
+                return;  // stopping
+            }
+        }
+        const auto t0 = std::chrono::steady_clock::now();
+        bool ok = false;
+        {
+            const ggml_nvtx::range nvtx_range("magpietts_batch_prefill_stream");
+            ok = backend_.prefillCompute(*job_);
+        }
+        const double ms =
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0)
+                .count();
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            stats_.prefill_ms += ms;
+        }
+        {
+            std::lock_guard<std::mutex> lock(prefill_mutex_);
+            job_ok_ = ok;
+            job_state_ = JobState::Done;
+        }
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            job_done_ = true;
+        }
+        wake_.notify_all();
+    }
+}
+
+void
+MagpieBatchScheduler::finishPrefillJob() {
+    std::unique_ptr<MagpieBatchPrefillJob> job = std::move(job_);
+    std::vector<EntryPtr> entries = std::move(job_entries_);
+    bool ok;
+    {
+        std::lock_guard<std::mutex> lock(prefill_mutex_);
+        ok = job_ok_;
+        job_state_ = JobState::None;
+    }
+    job_done_ = false;
+    {
+        const ggml_nvtx::range nvtx_range("magpietts_batch_prefill_first_frames");
+        ok = ok && backend_.prefillEnd(*job) && job->out.size() == entries.size();
+    }
+    if (!ok) {
+        fprintf(stderr, "MagpieTTS batch: prefill of %zu requests failed\n", entries.size());
+    } else {
+        std::lock_guard<std::mutex> lock(mutex_);
+        stats_.prefills += entries.size();
+    }
+    for (size_t i = 0; i < entries.size(); ++i) {
+        const EntryPtr& e = entries[i];
+        e->phase = Phase::Prefill;
+        if (!ok || e->cancel) {
+            fail(e);
+            continue;
+        }
+        const IMagpieBatchRequest::Status st = e->request->applyStep(job->out[i]);
+        if (st == IMagpieBatchRequest::Status::Failed) {
+            fail(e);
+        } else if (st == IMagpieBatchRequest::Status::EndChunk) {
+            endChunk(e);
+        } else {
+            e->phase = Phase::Decode;
+        }
+    }
 }
 
 bool
@@ -433,9 +726,12 @@ MagpieBatchScheduler::loop() {
             continue;
         }
         std::unique_lock<std::mutex> lock(mutex_);
-        const bool forming = config_.static_batching && !waiting_.empty();
+        // a forming batch (static batching, or a batched prefill waiting for requests) is
+        // checked again soon so its timeout fires on time
+        const bool forming = (config_.static_batching && !waiting_.empty()) ||
+                             prefill_window_start_ != std::chrono::steady_clock::time_point{};
         wake_.wait_for(lock, std::chrono::milliseconds(forming ? 2 : 50), [&] {
-            return stopping_ || !incoming_.empty() || !cancel_ids_.empty();
+            return stopping_ || !incoming_.empty() || !cancel_ids_.empty() || job_done_;
         });
     }
 }

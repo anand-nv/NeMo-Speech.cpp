@@ -64,6 +64,7 @@ class NanoCodecModel {
 
    private:
     friend class NanoCodecDecoder;
+    friend class NanoCodecBatchDecoder;
 
     struct Impl;
     std::unique_ptr<Impl> impl_;
@@ -129,6 +130,34 @@ class NanoCodecDecoder {
 
    private:
     const NanoCodecModel* model_;
+};
+
+// Batched streaming decoder for many concurrent streams (a TTS server's requests). Every stream
+// holds a slot of slot-indexed state arenas (the stateful codec's convolution histories), and the
+// chunks that streams submit while a batch runs are decoded together in the next one: one graph
+// with a batch dimension, launched on its own stream. A stream's audio is bit-identical to what
+// decodeStream produces for it. CUDA with the patched ggml series only (init reports why
+// otherwise).
+class NanoCodecBatchDecoder {
+   public:
+    // max_streams: concurrent streams (slots); max_chunk_frames: largest chunk a stream submits.
+    NanoCodecBatchDecoder(const NanoCodecModel& model, int max_streams, int max_chunk_frames);
+    ~NanoCodecBatchDecoder();
+
+    NanoCodecBatchDecoder(const NanoCodecBatchDecoder&) = delete;
+    NanoCodecBatchDecoder& operator=(const NanoCodecBatchDecoder&) = delete;
+
+    bool init(std::string* error);
+    // A slot with empty history for a new stream, or -1 when all are taken.
+    int acquire();
+    void release(int slot);
+    // Decode the next chunk (1 .. max_chunk_frames frames) of the slot's stream; blocks until the
+    // batch holding it is done. Calls for one slot must not overlap.
+    bool decode(int slot, const NanoCodecFrames& frames, std::vector<float>& audio);
+
+   private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
 };
 
 // True when every sample is finite (no NaN or infinity).

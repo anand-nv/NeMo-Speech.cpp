@@ -69,6 +69,13 @@ class MagpieBatchDecoder {
     // The slot's cache state before its next step.
     int slotRingHead(int slot) const;
     int slotValid(int slot) const;
+    // A batched prefill wrote the slot's caches in place (see MagpieDecoder::prefillBatch): make
+    // the slot's next step position n_tokens with text_len cross rows, as seedSlot + setSlotCross.
+    bool markPrefilled(int slot, int n_tokens, int text_len);
+    // The arenas as ggml tensors (batched prefill graphs write into them).
+    ggml_tensor* selfArenaTensor(int layer) const;
+    ggml_tensor* crossKTensor() const;
+    ggml_tensor* crossVTensor() const;
     // Device data of the arenas (fused kernels).
     float* selfArena(int layer) const;
     float* crossK() const;

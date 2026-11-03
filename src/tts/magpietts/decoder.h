@@ -112,6 +112,29 @@ struct magpietts_cuda_sample_request {
     std::vector<int32_t> argmax_codes;
 };
 
+// One text chunk of a batched baked-context prefill (MagpieDecoder::prefillBatch).
+struct MagpieDecoderPrefillRow {
+    int speaker = 0;
+    int text_len = 0;
+    const magpietts_backend_tensor* text_device = nullptr;  // encoded text [n_embd, text_len]
+    const std::vector<float>* prior = nullptr;  // attention prior over the text, or nullptr
+    std::vector<float>* alignment = nullptr;    // out: mean last-row cross-attention, or nullptr
+    int cond_lane = -1;                         // self-attention arena lane of the conditional pass
+    int uncond_lane = -1;                       // and of the unconditional pass (-1 without CFG)
+    int cross_slot = -1;                        // cross-attention arena slot
+};
+
+// Where a batched prefill writes its caches (the in-flight batching decoder's arenas).
+struct MagpieDecoderPrefillTargets {
+    // per layer: [n_embd * cache_len, lanes, 2 (K, V)]; a prefill of n rows fills rows
+    // [cache_len - n, cache_len) of a lane
+    std::vector<ggml_tensor*> self_arena;
+    int cache_len = 0;
+    // [cross_dim * text_capacity, n_layers, slots]
+    ggml_tensor* cross_k = nullptr;
+    ggml_tensor* cross_v = nullptr;
+};
+
 class MagpieDecoder {
    public:
     explicit MagpieDecoder(const magpietts_model& model);
@@ -177,6 +200,22 @@ class MagpieDecoder {
     // Whether decoder steps run a fused CUDA kernel that leaves no room on the GPU for other
     // kernels (such as the codec) while it runs.
     bool fusedStepExclusive() const;
+    // Batched prefillPair for the in-flight batching engine: the baked-context prefill of every
+    // row's text chunk (audio = BOS only) in one graph, written straight into `targets` (the
+    // conditional K/V, the shared unconditional K/V and the text's cross K/V), with the rows' last
+    // conditional hidden states in the columns of cond_hidden ([n_embd, >= rows]). The
+    // unconditional prefill is the same for every row and comes from the decoder's cache, so a
+    // prefillPair must have filled it first. Returns the prefill length (decoder rows per lane),
+    // or 0 when the batch cannot run here (the caller then prefills the rows one at a time).
+    // backend: optional side backend (own stream) to compute on; the graph completes before
+    // returning.
+    int prefillBatch(
+        const std::vector<MagpieDecoderPrefillRow>& rows,
+        const MagpieDecoderPrefillTargets& targets, int threads, ggml_gallocr_t* keep_allocr,
+        magpietts_backend_tensor& cond_hidden, ggml_backend_t backend = nullptr) const;
+    // The shared unconditional hidden state of a baked-context prefill ([n_embd]), or nullptr
+    // before the first prefillPair filled the cache.
+    const ggml_tensor* uncondPrefillHidden() const;
     bool adoptPrefill(
         const DecoderKvCache& prefetched_cond_kv, const DecoderKvCache& prefetched_uncond_kv,
         const DecoderCrossKvCache& prefetched_cross_kv, DecoderKvCache& cond_kv,

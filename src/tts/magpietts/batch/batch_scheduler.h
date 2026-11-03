@@ -72,6 +72,15 @@ class IMagpieBatchRequest {
     virtual bool start() = 0;
     // Prepare the next text chunk (text window, encoder). False = failed.
     virtual bool beginTextChunk() = 0;
+    // As beginTextChunk, but the request may leave its encoder pass to the scheduler, which
+    // encodes several requests' windows at once: textWindowToEncode then returns the window and
+    // the tensor to encode it into, and textEncoded must follow before prepareStep.
+    virtual bool beginTextChunkDeferred() { return beginTextChunk(); }
+    virtual const std::vector<int32_t>* textWindowToEncode(magpietts_backend_tensor** out) {
+        (void)out;
+        return nullptr;
+    }
+    virtual void textEncoded() {}
     // Before every step: fill the row (prefill fields included on a chunk's first step).
     // EndChunk when the chunk's step budget is used up, Failed when the request broke.
     virtual Status prepareStep(MagpieBatchRowInput& row) = 0;
@@ -86,17 +95,68 @@ class IMagpieBatchRequest {
 };
 
 // The model side: per-slot prefill, batched decode steps.
+// A batched prefill whose GPU work runs on the backend's prefill stream, on the scheduler's
+// prefill thread, while decode steps continue (MagpieBatchConfig::prefill_stream).
+struct MagpieBatchPrefillJob {
+    std::vector<int> slots;
+    std::vector<const MagpieBatchRowInput*> rows;
+    // deferred encoder passes of these rows (IMagpieBatchRequest::textWindowToEncode)
+    std::vector<const std::vector<int32_t>*> windows;
+    std::vector<magpietts_backend_tensor*> encoded;
+    std::vector<MagpieBatchRowOutput> out;  // the rows' first frames (and alignments)
+    int n_tokens = 0;                       // decoder rows the prefill wrote per lane
+};
+
 class IMagpieBatchBackend {
    public:
     virtual ~IMagpieBatchBackend() = default;
     // Prefill `row`'s text chunk into `slot` and sample its first frame.
     virtual bool prefill(int slot, const MagpieBatchRowInput& row, MagpieBatchRowOutput& out) = 0;
+    // Prefill several rows' text chunks at once (MagpieBatchConfig::prefill_batch_size); the
+    // default prefills them one at a time. out[i] is row i's first frame.
+    virtual bool prefillBatch(
+        const std::vector<int>& slots, const std::vector<const MagpieBatchRowInput*>& rows,
+        std::vector<MagpieBatchRowOutput>& out) {
+        out.assign(rows.size(), MagpieBatchRowOutput{});
+        for (size_t i = 0; i < rows.size(); ++i)
+            if (!prefill(slots[i], *rows[i], out[i]))
+                return false;
+        return true;
+    }
     // One frame for every (slot, row) pair, in one batched step.
     virtual bool decode(
         const std::vector<int>& slots, const std::vector<const MagpieBatchRowInput*>& rows,
         std::vector<MagpieBatchRowOutput>& out) = 0;
     // The slot's request left the batch.
     virtual void release(int slot) = 0;
+    // Whether batched prefills can run on a stream of their own (the three calls below): begin
+    // on the scheduler thread orders the prefill stream after the work already queued for
+    // decoding, compute on the prefill thread runs the encoder and the decoder prefill there
+    // (touching only the job's slots), end on the scheduler thread adds the first frames.
+    virtual bool prefillStream() const { return false; }
+    virtual bool prefillBegin(MagpieBatchPrefillJob& job) {
+        (void)job;
+        return false;
+    }
+    virtual bool prefillCompute(MagpieBatchPrefillJob& job) {
+        (void)job;
+        return false;
+    }
+    virtual bool prefillEnd(MagpieBatchPrefillJob& job) {
+        (void)job;
+        return false;
+    }
+    // Whether encodeTexts is supported.
+    virtual bool batchedEncoder() const { return false; }
+    // Encode several text windows at once into outs[i] (deferred encoder passes, see
+    // IMagpieBatchRequest::beginTextChunkDeferred).
+    virtual bool encodeTexts(
+        const std::vector<const std::vector<int32_t>*>& windows,
+        const std::vector<magpietts_backend_tensor*>& outs) {
+        (void)windows;
+        (void)outs;
+        return false;
+    }
 };
 
 struct MagpieBatchStats {
@@ -148,7 +208,8 @@ class MagpieBatchScheduler {
     int slotOf(int64_t id) const;
 
    private:
-    enum class Phase { Queued, Prefill, Decode };
+    // PrefillRunning: in a batched prefill on the prefill thread (not touched until it ends)
+    enum class Phase { Queued, Prefill, PrefillRunning, Decode };
     struct Entry {
         int64_t id = 0;
         RequestPtr request;
@@ -166,6 +227,15 @@ class MagpieBatchScheduler {
     void dropCancelled();
     void admit();
     bool runPrefills();
+    // Whether a batched prefill of `pending` requests runs now
+    // (MagpieBatchConfig::prefill_wait_ms).
+    bool prefillWindowClosed(size_t pending);
+    void runPrefillBatch(const std::vector<EntryPtr>& pending);
+    // Asynchronous batched prefill (MagpieBatchConfig::prefill_stream).
+    bool asyncPrefill() const;
+    bool submitPrefillJob(const std::vector<EntryPtr>& pending);
+    void finishPrefillJob();
+    void prefillLoop();
     bool runDecode();
     void endChunk(const EntryPtr& e);
     void fail(const EntryPtr& e);
@@ -186,7 +256,8 @@ class MagpieBatchScheduler {
     std::thread thread_;
     int64_t next_id_ = 1;
     MagpieBatchStats stats_;
-    std::chrono::steady_clock::time_point batch_wait_start_{};  // static batching
+    std::chrono::steady_clock::time_point batch_wait_start_{};      // static batching
+    std::chrono::steady_clock::time_point prefill_window_start_{};  // batched prefill window
 
     // scheduler-thread state
     std::deque<EntryPtr> waiting_;
@@ -199,6 +270,18 @@ class MagpieBatchScheduler {
     std::vector<Finisher> finishers_;
     std::atomic<int> finishing_{0};
     std::vector<int64_t> slot_owner_;  // slot -> request id (or 0), read by slotOf
+
+    // asynchronous batched prefill: the scheduler thread owns job_ except while job_state_ is
+    // Queued (the prefill thread computes it)
+    enum class JobState { None, Queued, Done };
+    std::thread prefill_thread_;
+    std::mutex prefill_mutex_;  // guards job_state_, job_ok_
+    std::condition_variable prefill_cv_;
+    JobState job_state_ = JobState::None;
+    bool job_ok_ = false;
+    std::atomic<bool> job_done_{false};  // wakes the scheduler loop
+    std::unique_ptr<MagpieBatchPrefillJob> job_;
+    std::vector<EntryPtr> job_entries_;
 };
 
 }  // namespace nemo_speech::tts

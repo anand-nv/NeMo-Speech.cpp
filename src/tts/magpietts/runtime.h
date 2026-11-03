@@ -46,6 +46,16 @@ struct MagpieRuntimeConfig {
     // steps (each still streams its own audio). 1 = one request at a time. Needs the local
     // transformer; every request uses this config's use_cfg.
     int max_batch_size = 1;
+    // Concurrent fused-kernel streams for steps larger than one launch (see MagpieBatchConfig).
+    int fused_streams = 2;
+    // Requests prefilled together in one batched prefill (see MagpieBatchConfig).
+    int prefill_batch_size = 1;
+    // Longest wait of a request for others to join its batched prefill (see MagpieBatchConfig).
+    int prefill_wait_ms = 0;
+    // Batched prefills on their own stream (see MagpieBatchConfig).
+    bool prefill_stream = false;
+    // Batched codec for the batching engine (see MagpieBatchConfig).
+    bool codec_batching = false;
     // Benchmark reference for max_batch_size > 1: static batching (a new batch starts only after
     // every request of the previous one finished decoding).
     bool static_batching = false;

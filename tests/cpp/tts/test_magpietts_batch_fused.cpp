@@ -6,6 +6,9 @@
 // reports the cost of a step at each batch size.
 //
 // Usage: test_magpietts_batch_fused <magpie.q8_0.gguf> [--rows 1,2,4,8,16] [--steps K] [--no-cfg]
+//            [--timing-only]
+// --timing-only reports the step cost of each row count on whichever path the backend runs (the
+// ggml graphs for an F16 model, too) without the batch-invariance check.
 // The model may also come from NEMO_SPEECH_TEST_TTS_MODEL (a Q8_0 model is needed for the fused
 // kernels); the test is skipped without a model, a GPU or fused-kernel support.
 #include <algorithm>
@@ -78,6 +81,7 @@ main(int argc, char** argv) {
     std::vector<int> row_counts = {1, 2, 4, 8, 16};
     int steps = 24;
     bool use_cfg = true;
+    bool timing_only = false;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         if (a == "--rows" && i + 1 < argc) {
@@ -89,6 +93,8 @@ main(int argc, char** argv) {
             steps = std::atoi(argv[++i]);
         } else if (a == "--no-cfg") {
             use_cfg = false;
+        } else if (a == "--timing-only") {
+            timing_only = true;
         } else {
             model_path = a;
         }
@@ -121,7 +127,7 @@ main(int argc, char** argv) {
         std::fprintf(stderr, "FAIL: backend init: %s\n", error.c_str());
         return 1;
     }
-    if (!backend.fused()) {
+    if (!backend.fused() && !timing_only) {
         std::printf("SKIP: fused kernels unavailable for this model/GPU (use a Q8_0 model)\n");
         return 77;
     }
@@ -196,6 +202,21 @@ main(int argc, char** argv) {
             *ms_per_step = total_ms / std::max(1, steps - 1);
         return true;
     };
+
+    if (timing_only) {
+        for (int B : row_counts) {
+            std::vector<int> ids(static_cast<size_t>(B));
+            for (int b = 0; b < B; ++b) ids[static_cast<size_t>(b)] = b;
+            double ms = 0.0;
+            if (!run(ids, &ms)) {
+                std::fprintf(stderr, "FAIL: run rows=%d\n", B);
+                return 1;
+            }
+            std::printf(
+                "rows=%d: %.3f ms/step (%s)\n", B, ms, backend.fused() ? "fused" : "graphs");
+        }
+        return 0;
+    }
 
     // Reference: every request alone.
     std::vector<Request> alone(static_cast<size_t>(max_rows));

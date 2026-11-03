@@ -18,6 +18,16 @@ class MagpieEncoder {
         const std::vector<int32_t>& tokens, int threads, magpietts_backend_tensor& out,
         ggml_backend_t backend = nullptr, ggml_gallocr_t* keep_allocr = nullptr) const;
 
+    // Several token windows in one graph (the in-flight batching engine's batched prefill): the
+    // windows are padded at the end to the longest one, which the causal encoder never attends
+    // to, and each window's rows are written straight into its outs[i] (allocated here). The
+    // results equal evalDevice's up to the summation order of the wider matmuls. backend: optional
+    // side backend (own stream) to compute on.
+    bool evalDeviceBatch(
+        const std::vector<const std::vector<int32_t>*>& windows, int threads,
+        const std::vector<magpietts_backend_tensor*>& outs, ggml_gallocr_t* keep_allocr,
+        ggml_backend_t backend = nullptr) const;
+
    private:
     const magpietts_model& model_;
 };

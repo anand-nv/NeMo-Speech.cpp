@@ -13,6 +13,12 @@
 #include "ggml-cpu.h"
 #include "graph.h"
 #include "nvtx_utils.h"
+#if defined(MAGPIETTS_CUDA_SAMPLING)
+#include <cuda_runtime.h>
+
+#include "ggml-cuda.h"
+#include "magpietts_batch_fused.h"
+#endif
 
 namespace nemo_speech::tts {
 
@@ -50,6 +56,47 @@ struct MagpieBatchLocalTransformer::Bucket {
         if (ctx)
             ggml_free(ctx);
     }
+};
+
+// Device buffers of GPU sampling: per-row configs, codes and greedy codes ([rows][rounds]),
+// with pinned host mirrors of the codes.
+struct MagpieBatchLocalTransformer::DeviceSampling {
+#if defined(MAGPIETTS_CUDA_SAMPLING)
+    int rows = 0, rounds = 0;
+    void* d_configs = nullptr;
+    void* h_configs = nullptr;
+    int32_t* d_codes = nullptr;  // codes, then argmax
+    int32_t* h_codes = nullptr;
+
+    ~DeviceSampling() { release(); }
+    void release() {
+        cudaFree(d_configs);
+        cudaFreeHost(h_configs);
+        cudaFree(d_codes);
+        cudaFreeHost(h_codes);
+        d_configs = h_configs = nullptr;
+        d_codes = h_codes = nullptr;
+        rows = 0;
+    }
+    bool reserve(int n_rows, int n_rounds) {
+        if (n_rows <= rows && n_rounds == rounds)
+            return true;
+        release();
+        const size_t cfg = magpietts_batch_fused_config_size() * (size_t)n_rows;
+        const size_t codes = 2 * sizeof(int32_t) * (size_t)n_rows * n_rounds;
+        if (cudaMalloc(&d_configs, cfg) != cudaSuccess ||
+            cudaMallocHost(&h_configs, cfg) != cudaSuccess ||
+            cudaMalloc(&d_codes, codes) != cudaSuccess ||
+            cudaMallocHost(&h_codes, codes) != cudaSuccess) {
+            (void)cudaGetLastError();
+            release();
+            return false;
+        }
+        rows = n_rows;
+        rounds = n_rounds;
+        return true;
+    }
+#endif
 };
 
 MagpieBatchLocalTransformer::MagpieBatchLocalTransformer(
@@ -220,6 +267,13 @@ MagpieBatchLocalTransformer::sample(
     if (!fill_input(b.input)) {
         return false;
     }
+    bool device_failed = false;
+    if (sampleDevice(b, bucket, sampling, codes, argmax, &device_failed)) {
+        return true;
+    }
+    if (device_failed) {
+        return false;
+    }
     if (ggml_backend_is_cpu(model_.backend)) {
         ggml_backend_cpu_set_n_threads(model_.backend, threads_);
     }
@@ -270,6 +324,87 @@ MagpieBatchLocalTransformer::sample(
         }
     }
     return true;
+}
+
+bool
+MagpieBatchLocalTransformer::sampleDevice(
+    Bucket& b, int bucket, const std::vector<MagpieBatchSampling>& sampling,
+    std::vector<std::vector<int32_t>>& codes, std::vector<std::vector<int32_t>>& argmax,
+    bool* failed) {
+#if defined(MAGPIETTS_CUDA_SAMPLING)
+    if (!magpietts_backend_is_cuda(model_.backend)) {
+        return false;
+    }
+    const ggml_nvtx::range nvtx_range("magpietts_batch_local_transformer_gpu_sampling");
+    const magpietts_hparams& h = model_.hparams;
+    const int rows = static_cast<int>(sampling.size());
+    const int rounds = h.stacked_audio_codebooks();
+    if (!device_) {
+        device_ = std::make_unique<DeviceSampling>();
+    }
+    DeviceSampling& d = *device_;
+    if (!d.reserve(bucket, rounds)) {
+        return false;  // host sampling instead
+    }
+    *failed = true;  // from here on a failure has touched the stream
+    cudaStream_t stream = (cudaStream_t)ggml_backend_cuda_get_stream(model_.backend);
+    for (int r = 0; r < rows; ++r) {
+        const MagpieBatchSampling& s = sampling[static_cast<size_t>(r)];
+        magpietts_batch_fused_write_config(
+            d.h_configs, r, use_cfg_, s.cfg_scale, s.temperature, s.top_k, s.forbid_eos, s.seed,
+            s.frame_index);
+    }
+    if (cudaMemcpyAsync(
+            d.d_configs, d.h_configs, magpietts_batch_fused_config_size() * (size_t)rows,
+            cudaMemcpyHostToDevice, stream) != cudaSuccess) {
+        return false;
+    }
+    int32_t* d_codes = d.d_codes;
+    int32_t* d_argmax = d.d_codes + (size_t)rows * rounds;
+    char error[256] = {};
+    for (int c = 0; c < rounds; ++c) {
+        Graph& g = *b.rounds[static_cast<size_t>(c)];
+        // round c reads prev_codes, which round c - 1's sampling wrote on the stream
+        if (ggml_backend_graph_compute_async(model_.backend, g.gf) != GGML_STATUS_SUCCESS) {
+            fprintf(stderr, "batched local transformer: round %d failed\n", c);
+            return false;
+        }
+        if (!magpietts_batch_sample_round(
+                stream, static_cast<const float*>(g.logits->data), h.audio_vocab_size, rows, bucket,
+                d.d_configs, c, rounds, h.audio_codebook_size, h.audio_eos_id, d_codes, d_argmax,
+                c + 1 < rounds ? static_cast<int32_t*>(b.prev_codes->data) : nullptr, error,
+                sizeof(error))) {
+            fprintf(stderr, "batched local transformer: %s\n", error);
+            return false;
+        }
+    }
+    const size_t bytes = 2 * sizeof(int32_t) * (size_t)rows * rounds;
+    if (cudaMemcpyAsync(d.h_codes, d.d_codes, bytes, cudaMemcpyDeviceToHost, stream) !=
+            cudaSuccess ||
+        cudaStreamSynchronize(stream) != cudaSuccess) {
+        return false;
+    }
+    codes.assign(static_cast<size_t>(rows), {});
+    argmax.assign(static_cast<size_t>(rows), {});
+    const int32_t* hc = d.h_codes;
+    const int32_t* ha = d.h_codes + (size_t)rows * rounds;
+    for (int r = 0; r < rows; ++r) {
+        codes[static_cast<size_t>(r)].assign(
+            hc + (size_t)r * rounds, hc + (size_t)(r + 1) * rounds);
+        argmax[static_cast<size_t>(r)].assign(
+            ha + (size_t)r * rounds, ha + (size_t)(r + 1) * rounds);
+    }
+    *failed = false;
+    return true;
+#else
+    (void)b;
+    (void)bucket;
+    (void)sampling;
+    (void)codes;
+    (void)argmax;
+    (void)failed;
+    return false;
+#endif
 }
 
 }  // namespace nemo_speech::tts

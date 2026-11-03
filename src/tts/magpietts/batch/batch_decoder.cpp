@@ -356,6 +356,35 @@ MagpieBatchDecoder::init(std::string* error) {
     return true;
 }
 
+bool
+MagpieBatchDecoder::markPrefilled(int slot, int n_tokens, int text_len) {
+    if (!session_ || slot < 0 || slot >= dummySlot() || n_tokens <= 0 || n_tokens > cache_len_ ||
+        text_len <= 0 || text_len > text_capacity_) {
+        return false;
+    }
+    SlotState& s = slots_[static_cast<size_t>(slot)];
+    s.n_tokens = n_tokens;
+    s.valid = n_tokens;
+    s.ring_head = 0;
+    s.text_len = text_len;
+    return true;
+}
+
+ggml_tensor*
+MagpieBatchDecoder::selfArenaTensor(int layer) const {
+    return session_->model_tensor_container->get_tensor_by_name(self_arena_name(layer)).tensor;
+}
+
+ggml_tensor*
+MagpieBatchDecoder::crossKTensor() const {
+    return session_->model_tensor_container->get_tensor_by_name(kCrossK).tensor;
+}
+
+ggml_tensor*
+MagpieBatchDecoder::crossVTensor() const {
+    return session_->model_tensor_container->get_tensor_by_name(kCrossV).tensor;
+}
+
 float*
 MagpieBatchDecoder::selfArena(int layer) const {
     return static_cast<float*>(

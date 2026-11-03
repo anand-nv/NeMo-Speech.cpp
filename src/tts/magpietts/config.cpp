@@ -151,6 +151,25 @@ register_runtime_config(common::ParameterParser& p, MagpieRuntimeConfig& c) {
         "max-batch-size", &c.max_batch_size,
         "Concurrent requests that share batched decoder steps (in-flight batching); 1 = serial");
     p.Register(
+        "fused-streams", &c.fused_streams,
+        "With max-batch-size > 16 on Q8_0/CUDA: chunks of a step that run concurrently on "
+        "separate streams (1 = one after another)");
+    p.Register(
+        "prefill-batch-size", &c.prefill_batch_size,
+        "With max-batch-size > 1: waiting requests prefilled together in one batched prefill "
+        "(1 = one at a time, bit-identical to serial synthesis)");
+    p.Register(
+        "prefill-wait-ms", &c.prefill_wait_ms,
+        "With prefill-batch-size > 1: longest wait of a request for others to join its batched "
+        "prefill (0 = prefill whatever is waiting at once)");
+    p.Register(
+        "prefill-stream", &c.prefill_stream,
+        "With prefill-batch-size > 1 on CUDA: run batched prefills on their own stream while "
+        "decode steps continue");
+    p.Register(
+        "codec-batching", &c.codec_batching,
+        "With max-batch-size > 1 on CUDA: decode the requests' audio chunks in one batched codec");
+    p.Register(
         "static-batching", &c.static_batching,
         "Benchmark reference: with max-batch-size > 1, start a new batch only after the previous "
         "one finished");

@@ -1,0 +1,481 @@
+From: Anand Joseph <anajoseph@nvidia.com>
+Subject: ggml-cuda: batch dimension for the fused NanoCodec convolutions
+
+GGML_OP_CONV1D_FUSED (plain and grouped) took one sequence: x [T, cin, 1]
+with its streaming cache [pad, cin, 1]. Accept a batch of independent
+sequences, x [T, cin, B] with caches [pad, cin, B] (and residuals
+[T, cout, B]), so a TTS server decodes the codec chunks of many concurrent
+requests in one launch per convolution instead of one small launch each.
+
+Time tiles of all sequences share grid.x. The split-K count is chosen from one
+sequence's tiles, so every sequence sums its channel chunks exactly as a
+batch-1 launch does and its output is bit-identical. The per-stream split-K
+scratch now grows on demand (outside CUDA graph capture) instead of dropping
+split-K when a launch needs more than the initial 4 MB.
+
+ggml_conv_transpose_1d accepted only a matrix input although its CUDA
+kernels already index every output by batch plane: accept [T, cin, B] there
+too (the CPU kernel still takes one sequence and asserts it).
+
+The half-snake fusion matched only unbatched activations, whose channel
+slices are contiguous views. A batch's slices are strided and made
+contiguous by CONT nodes; match that form too and read the leaky-ReLU slice
+through its view (the kernel now takes strides), so a batched activation
+runs the same fused arithmetic per element as an unbatched one.
+
+Upstream: stays here (the ops are project-specific; the conv_transpose_1d
+batch could go upstream with a CPU kernel).
+
+diff --git a/ggml/src/ggml-cpu/ops.cpp b/ggml/src/ggml-cpu/ops.cpp
+index c18341fab842617604aef3b01c85d1e63a31085b..c4914038546121bd5cb746f45645e4aefdecddc8 100644
+--- a/ggml/src/ggml-cpu/ops.cpp
++++ b/ggml/src/ggml-cpu/ops.cpp
+@@ -6609,6 +6609,7 @@ void ggml_compute_forward_conv_transpose_1d(
+               ggml_tensor * dst) {
+ 
+     const ggml_tensor * src0 = dst->src[0];
++    GGML_ASSERT(dst->src[1]->ne[2] == 1 && "conv_transpose_1d: batches are CUDA-only");
+ 
+     switch (src0->type) {
+         case GGML_TYPE_F16:
+diff --git a/ggml/src/ggml-cuda/conv1d-fused.cu b/ggml/src/ggml-cuda/conv1d-fused.cu
+index 849f7d34f836d1c5b36d1a505663e3a7d5b86045..3718b1b9e7e85782b41e875c34582f1e78a9b797 100644
+--- a/ggml/src/ggml-cuda/conv1d-fused.cu
++++ b/ggml/src/ggml-cuda/conv1d-fused.cu
+@@ -42,6 +42,10 @@ struct conv1d_fused_params {
+     int         * counters;   // [tiles] arrival counters, zero between launches
+     const float * residual;   // optional [cout (x groups)][T] added to the output
+     long xs, cs, ys, rs;
++    // batch: blockIdx.x = b * tiles_m + time tile; per-sequence strides (floats) of x, cache, y,
++    // residual. Every sequence runs exactly the arithmetic of a batch-1 launch.
++    long xbs, cbs, ybs, rbs;
++    int tiles_m;
+     int T, cache_len, t_out, cin, cin_pad, cout, cout_pad, K, d, snake_ch;
+     int chunks_per_split, n_chunks, splits;
+     float slope;
+@@ -70,13 +74,14 @@ __device__ __forceinline__ void mma_16816(float (&c)[4], const unsigned (&a)[4],
+ __global__ void conv1d_activate_pack(conv1d_fused_params p, half * dst) {
+     const int ci = blockIdx.x * blockDim.x + threadIdx.x;
+     const int t = blockIdx.y;
+-    const int grp = blockIdx.z;
++    const int grp = blockIdx.z % p.groups;
++    const int b = blockIdx.z / p.groups;
+     if (ci >= p.cin_pad) return;
+     float v = 0.0f;
+     if (ci < p.cin) {
+         const int cb = (p.shared_input ? 0 : grp * p.cin) + ci;
+-        v = t < p.cache_len ? p.cache[(size_t)cb * p.cs + t]
+-                            : p.x[(size_t)cb * p.xs + t - p.cache_len];
++        v = t < p.cache_len ? p.cache[(size_t)b * p.cbs + (size_t)cb * p.cs + t]
++                            : p.x[(size_t)b * p.xbs + (size_t)cb * p.xs + t - p.cache_len];
+         if (p.alpha) {
+             if (ci < p.snake_ch) {
+                 const float sn = __sinf(p.alpha[grp * p.snake_ch + ci] * v);
+@@ -86,7 +91,7 @@ __global__ void conv1d_activate_pack(conv1d_fused_params p, half * dst) {
+             }
+         }
+     }
+-    dst[((size_t)grp * (p.cache_len + p.T) + t) * p.cin_pad + ci] = __float2half(v);
++    dst[(((size_t)b * p.groups + grp) * (p.cache_len + p.T) + t) * p.cin_pad + ci] = __float2half(v);
+ }
+ 
+ constexpr int CF_MAX_REGS = 168;
+@@ -135,7 +140,13 @@ __global__ void CF_LAUNCH_BOUNDS conv1d_fused_kernel(const conv1d_fused_params p
+     const int warp = tid >> 5;
+     const int wm   = warp % WARPS_M;
+     const int wn   = warp / WARPS_M;
+-    const int t0   = blockIdx.x * BM;
++    const int bseq = (int) blockIdx.x / p.tiles_m;  // sequence of the batch
++    const int t0   = ((int) blockIdx.x - bseq * p.tiles_m) * BM;
++    const float * px = p.x + (size_t) bseq * p.xbs;
++    const float * pcache = p.cache ? p.cache + (size_t) bseq * p.cbs : nullptr;
++    float * py = p.y + (size_t) bseq * p.ybs;
++    const float * pres = p.residual ? p.residual + (size_t) bseq * p.rbs : nullptr;
++    const half * pact = p.activated ? p.activated + (size_t) bseq * p.groups * (p.cache_len + p.T) * p.cin_pad : nullptr;
+     const int co0  = (p.groups > 1 ? (int) blockIdx.y % p.tiles_n : (int) blockIdx.y) * CF_BN;
+     const int total_in = pad_g + p.T;
+     const int c_begin = blockIdx.z * p.chunks_per_split;
+@@ -196,8 +207,8 @@ __global__ void CF_LAUNCH_BOUNDS conv1d_fused_kernel(const conv1d_fused_params p
+                 const int ci = ci0 + (int) (m >> 16);
+                 const int g = t0 + (int) (m & 0xffffu);
+                 if (ci < p.cin) {
+-                    v = g < pad_g ? p.cache[(size_t) (cin_base + ci) * p.cs + cache_col0 + g]
+-                                  : p.x[(size_t) (cin_base + ci) * p.xs + (g - pad_g)];
++                    v = g < pad_g ? pcache[(size_t) (cin_base + ci) * p.cs + cache_col0 + g]
++                                  : px[(size_t) (cin_base + ci) * p.xs + (g - pad_g)];
+                 }
+             }
+             pf[i] = v;
+@@ -249,7 +260,7 @@ __global__ void CF_LAUNCH_BOUNDS conv1d_fused_kernel(const conv1d_fused_params p
+                 half * dst = s_win + buf * W_CHUNK + u * CF_LDW + seg * 8;
+                 const int t = cache_col0 + t0 + u;
+                 if (t < p.cache_len + p.T) {
+-                    const half * src = p.activated + ((size_t)grp * (p.cache_len + p.T) + t) * p.cin_pad + c * CF_BK + seg * 8;
++                    const half * src = pact + ((size_t)grp * (p.cache_len + p.T) + t) * p.cin_pad + c * CF_BK + seg * 8;
+                     cp_async16(dst, src);
+                 } else {
+                     *reinterpret_cast<uint4 *>(dst) = make_uint4(0,0,0,0);
+@@ -350,9 +361,9 @@ __global__ void CF_LAUNCH_BOUNDS conv1d_fused_kernel(const conv1d_fused_params p
+                 float v = p.bias ? p.bias[cout_base + co] : 0.0f;
+                 for (int z = 0; z < p.splits; ++z)
+                     v += p.partials[((size_t) z * tiles + tile) * (BM * CF_BN) + e];
+-                if (p.residual)
+-                    v += p.residual[(size_t) ((p.residual_shared ? 0 : cout_base) + co) * p.rs + t];
+-                p.y[(size_t) (cout_base + co) * p.ys + t] = v;
++                if (pres)
++                    v += pres[(size_t) ((p.residual_shared ? 0 : cout_base) + co) * p.rs + t];
++                py[(size_t) (cout_base + co) * p.ys + t] = v;
+             }
+         }
+         if (tid == 0) p.counters[tile] = 0;  // ready for the next launch
+@@ -362,9 +373,9 @@ __global__ void CF_LAUNCH_BOUNDS conv1d_fused_kernel(const conv1d_fused_params p
+             const int t = t0 + m, co = co0 + n;
+             if (t < p.t_out && co < p.cout) {
+                 float v = s_c[m * LDC + n] + (p.bias ? p.bias[cout_base + co] : 0.0f);
+-                if (p.residual)
+-                    v += p.residual[(size_t) ((p.residual_shared ? 0 : cout_base) + co) * p.rs + t];
+-                p.y[(size_t) (cout_base + co) * p.ys + t] = v;
++                if (pres)
++                    v += pres[(size_t) ((p.residual_shared ? 0 : cout_base) + co) * p.rs + t];
++                py[(size_t) (cout_base + co) * p.ys + t] = v;
+             }
+         }
+     }
+@@ -372,8 +383,11 @@ __global__ void CF_LAUNCH_BOUNDS conv1d_fused_kernel(const conv1d_fused_params p
+ }
+ 
+ // launch geometry shared by the bench and the ggml op
++// tiles_m is per sequence; a batch of nb sequences launches nb * tiles_m time tiles. The split-K
++// count depends only on one sequence's tiles, so each sequence sums its channel chunks exactly as
++// a batch-1 launch does.
+ struct geometry { int BM, tiles_m, tiles_n, splits, chunks_per_split; size_t smem, partial_floats; };
+-static inline geometry plan(const conv1d_fused_params & p) {
++static inline geometry plan(const conv1d_fused_params & p, int nb = 1) {
+     geometry g{};
+     const int n_chunks = p.cin_pad / CF_BK;
+     g.BM = p.t_out >= 64 ? 64 : 32;
+@@ -396,7 +410,7 @@ static inline geometry plan(const conv1d_fused_params & p) {
+     const int win = g.BM + padmax;
+     g.smem = (size_t) (CF_STAGES * kmax * CF_BN * CF_LDB + 2 * win * CF_LDW) * sizeof(half);
+     if (g.smem < (size_t) g.BM * (CF_BN + 4) * sizeof(float)) g.smem = (size_t) g.BM * (CF_BN + 4) * sizeof(float);
+-    g.partial_floats = splits > 1 ? (size_t) splits * tiles * g.BM * CF_BN : 0;
++    g.partial_floats = splits > 1 ? (size_t) splits * tiles * nb * g.BM * CF_BN : 0;
+     return g;
+ }
+ 
+@@ -435,18 +449,42 @@ bool ggml_cuda_conv1d_fused_supported(const ggml_tensor * op, int cc) {
+ // stream's buffer is reused without synchronization, and kernels on different streams never share
+ // one. Counters are zero-initialized once and reset by the last block of every tile. (A per-op
+ // pool allocation here caused host-side frees and stalls.)
+-constexpr size_t CF_SCRATCH_FLOATS = 1u << 20;  // 4 MB of partials
+-constexpr int    CF_MAX_TILES      = 4096;
+-struct conv1d_fused_scratch { float * partials = nullptr; int * counters = nullptr; };
+-static conv1d_fused_scratch & conv1d_fused_get_scratch(int device, cudaStream_t stream) {
++// Batched launches (many sequences) need more: the scratch grows on demand, after the stream's
++// queued work that may still use the old buffers has finished, but not during CUDA graph capture
++// (the launch then runs without split-K).
++constexpr size_t CF_SCRATCH_FLOATS = 1u << 20;  // 4 MB of partials (initial)
++constexpr int    CF_MAX_TILES      = 4096;      // (initial)
++struct conv1d_fused_scratch {
++    float * partials = nullptr;
++    int * counters = nullptr;
++    size_t partial_floats = 0;
++    size_t tiles = 0;
++};
++static conv1d_fused_scratch & conv1d_fused_get_scratch(
++        int device, cudaStream_t stream, size_t need_floats = 0, size_t need_tiles = 0) {
+     static std::mutex mutex;
+     static std::map<std::pair<int, cudaStream_t>, conv1d_fused_scratch> scratch;
+     std::lock_guard<std::mutex> lock(mutex);
+     conv1d_fused_scratch & sc = scratch[{device, stream}];
++    if (sc.partials && (need_floats > sc.partial_floats || need_tiles > sc.tiles)) {
++        // never while the stream is captured into a CUDA graph: the graph keeps the old pointers
++        cudaStreamCaptureStatus capturing = cudaStreamCaptureStatusNone;
++        CUDA_CHECK(cudaStreamIsCapturing(stream, &capturing));
++        if (capturing != cudaStreamCaptureStatusNone) {
++            return sc;
++        }
++        CUDA_CHECK(cudaStreamSynchronize(stream));
++        CUDA_CHECK(cudaFree(sc.partials));
++        CUDA_CHECK(cudaFree(sc.counters));
++        sc.partials = nullptr;
++        sc.counters = nullptr;
++    }
+     if (!sc.partials) {
+-        CUDA_CHECK(cudaMalloc(&sc.partials, CF_SCRATCH_FLOATS * sizeof(float)));
+-        CUDA_CHECK(cudaMalloc(&sc.counters, CF_MAX_TILES * sizeof(int)));
+-        CUDA_CHECK(cudaMemset(sc.counters, 0, CF_MAX_TILES * sizeof(int)));
++        sc.partial_floats = need_floats > CF_SCRATCH_FLOATS ? need_floats : CF_SCRATCH_FLOATS;
++        sc.tiles = need_tiles > (size_t) CF_MAX_TILES ? need_tiles : (size_t) CF_MAX_TILES;
++        CUDA_CHECK(cudaMalloc(&sc.partials, sc.partial_floats * sizeof(float)));
++        CUDA_CHECK(cudaMalloc(&sc.counters, sc.tiles * sizeof(int)));
++        CUDA_CHECK(cudaMemset(sc.counters, 0, sc.tiles * sizeof(int)));
+         CUDA_CHECK(cudaFuncSetAttribute(conv1d_fused_kernel<64>, cudaFuncAttributeMaxDynamicSharedMemorySize, 96 * 1024));
+         CUDA_CHECK(cudaFuncSetAttribute(conv1d_fused_kernel<32>, cudaFuncAttributeMaxDynamicSharedMemorySize, 96 * 1024));
+         CUDA_CHECK(cudaFuncSetAttribute(conv1d_fused_kernel<64, true>, cudaFuncAttributeMaxDynamicSharedMemorySize, 96 * 1024));
+@@ -475,6 +513,10 @@ void ggml_cuda_op_conv1d_fused(ggml_backend_cuda_context & ctx, ggml_tensor * ds
+     p.xs = (long) (x->nb[1] / sizeof(float));
+     p.cs = cache ? (long) (cache->nb[1] / sizeof(float)) : 0;
+     p.ys = (long) (dst->nb[1] / sizeof(float));
++    const int nb = (int) x->ne[2];  // sequences of the batch
++    p.xbs = (long) (x->nb[2] / sizeof(float));
++    p.cbs = cache ? (long) (cache->nb[2] / sizeof(float)) : 0;
++    p.ybs = (long) (dst->nb[2] / sizeof(float));
+     p.T = (int) x->ne[0];
+     p.cache_len = cache ? (int) cache->ne[0] : 0;
+     p.t_out = (int) dst->ne[0];
+@@ -513,12 +555,15 @@ void ggml_cuda_op_conv1d_fused(ggml_backend_cuda_context & ctx, ggml_tensor * ds
+     const ggml_tensor * residual = dst->src[6];
+     p.residual = residual ? (const float *) residual->data : nullptr;
+     p.rs = residual ? (long) (residual->nb[1] / sizeof(float)) : 0;
++    p.rbs = residual ? (long) (residual->nb[2] / sizeof(float)) : 0;
+     p.n_chunks = p.cin_pad / CF_BK;
+ 
+-    geometry g = plan(p);
+-    conv1d_fused_scratch & sc = conv1d_fused_get_scratch(ctx.device, ctx.stream());
+-    if (g.partial_floats > CF_SCRATCH_FLOATS || g.tiles_m * g.tiles_n > CF_MAX_TILES) {
+-        // too large for the static scratch: no split-K
++    geometry g = plan(p, nb);
++    p.tiles_m = g.tiles_m;
++    conv1d_fused_scratch & sc = conv1d_fused_get_scratch(
++        ctx.device, ctx.stream(), g.partial_floats, (size_t) g.tiles_m * nb * g.tiles_n);
++    if (g.partial_floats > sc.partial_floats || (size_t) g.tiles_m * nb * g.tiles_n > sc.tiles) {
++        // the scratch could not grow (CUDA graph capture): no split-K for this launch
+         g.splits = 1;
+         g.chunks_per_split = p.n_chunks;
+         g.partial_floats = 0;
+@@ -528,13 +573,13 @@ void ggml_cuda_op_conv1d_fused(ggml_backend_cuda_context & ctx, ggml_tensor * ds
+     p.partials = sc.partials;
+     p.counters = sc.counters;
+     cudaStream_t stream = ctx.stream();
+-    dim3 grid(g.tiles_m, g.tiles_n, g.splits);
++    dim3 grid(g.tiles_m * nb, g.tiles_n, g.splits);
+     // Grouped problems with several cout tiles re-activate the same input per tile: pack and
+     // activate it once instead (bit-identical results; grid.y bounds the time extent).
+     if (p.groups > 1 && p.tiles_n > 1 && p.cache_len + p.T <= 65535) {
+-        ggml_cuda_pool_alloc<half> activated(ctx.pool(), (size_t)p.groups * (p.cache_len + p.T) * p.cin_pad);
++        ggml_cuda_pool_alloc<half> activated(ctx.pool(), (size_t)nb * p.groups * (p.cache_len + p.T) * p.cin_pad);
+         p.activated = activated.get();
+-        conv1d_activate_pack<<<dim3((p.cin_pad+127)/128, p.cache_len+p.T, p.groups),128,0,stream>>>(p,activated.get());
++        conv1d_activate_pack<<<dim3((p.cin_pad+127)/128, p.cache_len+p.T, p.groups * nb),128,0,stream>>>(p,activated.get());
+         if (g.BM == 64) conv1d_fused_kernel<64, true><<<grid, CF_THREADS, g.smem, stream>>>(p);
+         else            conv1d_fused_kernel<32, true><<<grid, CF_THREADS, g.smem, stream>>>(p);
+     } else {
+diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
+index 538da52595bdd669aa9a601240e9b3bd4ee40e89..84349cc1251e14e64f814de1046864b30ff63d8c 100644
+--- a/ggml/src/ggml-cuda/ggml-cuda.cu
++++ b/ggml/src/ggml-cuda/ggml-cuda.cu
+@@ -3656,6 +3656,86 @@ static bool ggml_cuda_node_can_be_elided(const struct ggml_cgraph * cgraph, int
+            ggml_node_get_use_count(cgraph, node_idx) == expected_uses;
+ }
+ 
++// Batched form of the half-snake pattern (NanoCodec's batched streaming decode): x is [T, C, B],
++// so its channel slices are strided and the graph makes them contiguous first:
++//   x_snake = CONT(VIEW(x)) [node i-1] -> mul, sin, sqr, mul, add [i .. i+4]
++//   VIEW(x) [i+5] -> CONT [i+6] -> leaky_relu [i+7] -> concat [i+8]
++// The fused kernel reads the computed x_snake and the leaky-ReLU slice straight from the view,
++// with exactly the per-element arithmetic of the unbatched fusion. Returns the nodes to skip.
++static int ggml_cuda_try_fuse_half_snake_batched(ggml_backend_cuda_context * cuda_ctx, ggml_cgraph * cgraph, int i) {
++    if (i <= 0 || i + 8 >= cgraph->n_nodes) {
++        return 0;
++    }
++    ggml_tensor * mul0   = cgraph->nodes[i + 0];
++    ggml_tensor * sin    = cgraph->nodes[i + 1];
++    ggml_tensor * sqr    = cgraph->nodes[i + 2];
++    ggml_tensor * mul1   = cgraph->nodes[i + 3];
++    ggml_tensor * add    = cgraph->nodes[i + 4];
++    ggml_tensor * view_l = cgraph->nodes[i + 5];
++    ggml_tensor * cont_l = cgraph->nodes[i + 6];
++    ggml_tensor * lrelu  = cgraph->nodes[i + 7];
++    ggml_tensor * concat = cgraph->nodes[i + 8];
++    if (mul0->op != GGML_OP_MUL || sin->op != GGML_OP_SIN || sqr->op != GGML_OP_SQR ||
++        mul1->op != GGML_OP_MUL || add->op != GGML_OP_ADD || view_l->op != GGML_OP_VIEW ||
++        cont_l->op != GGML_OP_CONT || lrelu->op != GGML_OP_LEAKY_RELU || concat->op != GGML_OP_CONCAT) {
++        return 0;
++    }
++    for (int k = 0; k <= 7; ++k) {
++        if (!ggml_cuda_node_can_be_elided(cgraph, i + k, 1)) {
++            return 0;
++        }
++    }
++    const ggml_tensor * x_snake = ggml_are_same_shape(mul0, mul0->src[0]) ? mul0->src[0] : mul0->src[1];
++    const ggml_tensor * alpha   = (x_snake == mul0->src[0]) ? mul0->src[1] : mul0->src[0];
++    if (x_snake->op != GGML_OP_CONT || x_snake != cgraph->nodes[i - 1] || x_snake->src[0]->op != GGML_OP_VIEW) {
++        return 0;
++    }
++    const ggml_tensor * inv_b = (mul1->src[0] == sqr) ? mul1->src[1] : mul1->src[0];
++    const ggml_tensor * x_in_add = (add->src[0] == mul1) ? add->src[1] : add->src[0];
++    if (sin->src[0] != mul0 || sqr->src[0] != sin || (mul1->src[0] != sqr && mul1->src[1] != sqr) ||
++        x_in_add != x_snake || cont_l->src[0] != view_l || lrelu->src[0] != cont_l ||
++        concat->src[0] != add || concat->src[1] != lrelu) {
++        return 0;
++    }
++    const int32_t concat_dim = ((const int32_t *) concat->op_params)[0];
++    const bool shape_ok = x_snake->type == GGML_TYPE_F32 && view_l->type == GGML_TYPE_F32 &&
++                          concat->type == GGML_TYPE_F32 && concat_dim == 1 &&
++                          x_snake->src[0]->view_src == view_l->view_src &&
++                          view_l->nb[0] == sizeof(float) &&
++                          x_snake->ne[0] == view_l->ne[0] && x_snake->ne[2] == view_l->ne[2] &&
++                          x_snake->ne[3] == 1 && view_l->ne[3] == 1 &&
++                          concat->ne[0] == x_snake->ne[0] &&
++                          concat->ne[1] == x_snake->ne[1] + view_l->ne[1] &&
++                          concat->ne[2] == x_snake->ne[2] &&
++                          alpha->type == GGML_TYPE_F32 && inv_b->type == GGML_TYPE_F32 &&
++                          ggml_is_contiguous(alpha) && ggml_is_contiguous(inv_b) &&
++                          ggml_nelements(alpha) == x_snake->ne[1] &&
++                          ggml_nelements(inv_b) == x_snake->ne[1] &&
++                          ggml_is_contiguous(x_snake) && ggml_is_contiguous(concat);
++    if (!shape_ok) {
++        return 0;
++    }
++    // As below, the allocator planned for the unfused sequence: the output must miss x_snake, and
++    // either miss the parent activation or be exactly it (concat [T, C, B] has the parent's layout,
++    // so every leaky-ReLU element is then read and written at one address).
++    const char * dst_beg = (const char *) concat->data;
++    const char * dst_end = dst_beg + ggml_nbytes(concat);
++    const char * snk_beg = (const char *) x_snake->data;
++    const char * snk_end = snk_beg + ggml_nbytes(x_snake);
++    const ggml_tensor * parent = view_l->view_src;
++    const char * par_beg = (const char *) parent->data;
++    const char * par_end = par_beg + ggml_nbytes(parent);
++    const bool snake_disjoint = snk_end <= dst_beg || dst_end <= snk_beg;
++    const bool parent_disjoint = par_end <= dst_beg || dst_end <= par_beg;
++    const bool parent_inplace = dst_beg == par_beg && dst_end == par_end && ggml_is_contiguous(parent) &&
++                                ggml_are_same_shape(parent, concat);
++    if (!snake_disjoint || !(parent_disjoint || parent_inplace)) {
++        return 0;
++    }
++    ggml_cuda_op_half_snake_fused(*cuda_ctx, x_snake, view_l, alpha, inv_b, lrelu, concat);
++    return 8;
++}
++
+ static int ggml_cuda_try_fuse_half_snake(ggml_backend_cuda_context * cuda_ctx, ggml_cgraph * cgraph, int i) {
+     if (i <= 0 || i + 7 >= cgraph->n_nodes) {
+         return 0;
+@@ -3794,6 +3874,9 @@ static int ggml_cuda_try_fuse(ggml_backend_cuda_context * cuda_ctx, ggml_cgraph
+         }
+     }
+ 
++    if (int n_fused = ggml_cuda_try_fuse_half_snake_batched(cuda_ctx, cgraph, i)) {
++        return n_fused;
++    }
+     if (int n_fused = ggml_cuda_try_fuse_half_snake(cuda_ctx, cgraph, i)) {
+         return n_fused;
+     }
+diff --git a/ggml/src/ggml-cuda/snake.cu b/ggml/src/ggml-cuda/snake.cu
+index 6f4b219c3520fa954e2f5c72150a0a1f3ed1f412..f5185e921ff5f968c867fcf898b316753e4ec950 100644
+--- a/ggml/src/ggml-cuda/snake.cu
++++ b/ggml/src/ggml-cuda/snake.cu
+@@ -85,7 +85,9 @@ static __global__ void half_snake_kernel(
+         const int    snake_channels,
+         const int    lrelu_channels,
+         const int    channels,
+-        const float  negative_slope) {
++        const float  negative_slope,
++        const long   s1, const long s2,    // x_snake channel / plane strides (elements)
++        const long   l1, const long l2) {  // x_lrelu channel / plane strides (elements)
+     const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+     if (idx >= total) return;
+ 
+@@ -94,13 +96,13 @@ static __global__ void half_snake_kernel(
+     const int plane = idx / (T_len * channels);
+ 
+     if (c < snake_channels) {
+-        const int src_idx = plane * T_len * snake_channels + c * T_len + t;
++        const long src_idx = plane * s2 + c * s1 + t;
+         const float xi = ggml_cuda_cast<float>(x_snake[src_idx]);
+         const float s  = sinf(a[c] * xi);
+         dst[idx] = ggml_cuda_cast<T>(xi + s * s * inv_b[c]);
+     } else {
+         const int lc = c - snake_channels;
+-        const int src_idx = plane * T_len * lrelu_channels + lc * T_len + t;
++        const long src_idx = plane * l2 + lc * l1 + t;
+         const float xi = ggml_cuda_cast<float>(x_lrelu[src_idx]);
+         dst[idx] = ggml_cuda_cast<T>(fmaxf(xi, 0.0f) + fminf(xi, 0.0f) * negative_slope);
+     }
+@@ -128,22 +130,26 @@ void ggml_cuda_op_half_snake_fused(ggml_backend_cuda_context & ctx,
+ 
+     const float * a_d     = (const float *) a->data;
+     const float * inv_b_d = (const float *) inv_b->data;
++    // inputs may be strided views (a batch's channel slices of one parent)
++    const size_t es = ggml_element_size(x_snake);
++    const long s1 = (long) (x_snake->nb[1] / es), s2 = (long) (x_snake->nb[2] / es);
++    const long l1 = (long) (x_lrelu->nb[1] / es), l2 = (long) (x_lrelu->nb[2] / es);
+ 
+     switch (dst->type) {
+         case GGML_TYPE_F32: {
+             half_snake_kernel<<<grid_size, block_size, 0, stream>>>(
+                 (const float *) x_snake->data, (const float *) x_lrelu->data, a_d, inv_b_d, (float *) dst->data,
+-                total, T, snake_channels, lrelu_channels, channels, negative_slope);
++                total, T, snake_channels, lrelu_channels, channels, negative_slope, s1, s2, l1, l2);
+         } break;
+         case GGML_TYPE_F16: {
+             half_snake_kernel<<<grid_size, block_size, 0, stream>>>(
+                 (const half *) x_snake->data, (const half *) x_lrelu->data, a_d, inv_b_d, (half *) dst->data,
+-                total, T, snake_channels, lrelu_channels, channels, negative_slope);
++                total, T, snake_channels, lrelu_channels, channels, negative_slope, s1, s2, l1, l2);
+         } break;
+         case GGML_TYPE_BF16: {
+             half_snake_kernel<<<grid_size, block_size, 0, stream>>>(
+                 (const nv_bfloat16 *) x_snake->data, (const nv_bfloat16 *) x_lrelu->data, a_d, inv_b_d,
+-                (nv_bfloat16 *) dst->data, total, T, snake_channels, lrelu_channels, channels, negative_slope);
++                (nv_bfloat16 *) dst->data, total, T, snake_channels, lrelu_channels, channels, negative_slope, s1, s2, l1, l2);
+         } break;
+         default:
+             GGML_ABORT("half_snake: unsupported type");
+diff --git a/ggml/src/ggml.c b/ggml/src/ggml.c
+index 178d2bc275e4c1efce9aeffd62f3fc5565385f39..b1170c9482e323a94fb4988ac1b3d2488364386e 100644
+--- a/ggml/src/ggml.c
++++ b/ggml/src/ggml.c
+@@ -4729,7 +4729,8 @@ GGML_API struct ggml_tensor * ggml_conv_transpose_1d(
+         int                   s0,
+         int                   p0,
+         int                   d0) {
+-    GGML_ASSERT(ggml_is_matrix(b));
++    // b [T, cin, B]: a batch of independent sequences (CUDA; the CPU kernel takes B = 1)
++    GGML_ASSERT(b->ne[3] == 1);
+     GGML_ASSERT(a->ne[2] == b->ne[1]);
+     GGML_ASSERT(a->ne[3] == 1);
+ 
+@@ -5729,14 +5730,17 @@ struct ggml_tensor * ggml_conv1d_fused(
+     GGML_ASSERT(w_packed->ne[1] >= cout && (w_packed->ne[1] % 16) == 0);       // cout_pad
+     GGML_ASSERT(bias == NULL || ggml_nelements(bias) == cout);  // [cout] or [1, cout, 1]
+     const int64_t pad = (int64_t) (kernel - 1) * dilation;
+-    GGML_ASSERT(cache == NULL || (cache->type == GGML_TYPE_F32 && cache->ne[0] == pad && cache->ne[1] == x->ne[1]));
++    // x [T, cin, B]: B independent sequences, each with its own cache [pad, cin, B]
++    GGML_ASSERT(x->ne[3] == 1);
++    GGML_ASSERT(cache == NULL || (cache->type == GGML_TYPE_F32 && cache->ne[0] == pad && cache->ne[1] == x->ne[1] &&
++                                  cache->ne[2] == x->ne[2] && cache->ne[3] == 1));
+     GGML_ASSERT(cache != NULL || pad == 0);
+     GGML_ASSERT((alpha == NULL) == (alpha_inv == NULL));
+     const int64_t cache_len = cache ? cache->ne[0] : 0;
+     const int64_t t_out = cache_len + x->ne[0] - pad;
+     GGML_ASSERT(t_out > 0);
+ 
+-    struct ggml_tensor * result = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, t_out, cout, 1);
++    struct ggml_tensor * result = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, t_out, cout, x->ne[2]);
+     int32_t params[5] = { kernel, dilation, snake_channels, alpha ? 1 : 0, 0 };
+     memcpy(&params[4], &slope, sizeof(float));
+     ggml_set_op_params(result, params, sizeof(params));
+@@ -5778,15 +5782,18 @@ struct ggml_tensor * ggml_conv1d_fused_grouped(
+         const int pad = (kernels[g] - 1) * dilations[g];
+         max_pad = pad > max_pad ? pad : max_pad;
+     }
+-    GGML_ASSERT(cache == NULL || (cache->type == GGML_TYPE_F32 && cache->ne[0] == max_pad && cache->ne[1] == x->ne[1]));
++    GGML_ASSERT(x->ne[3] == 1);
++    GGML_ASSERT(cache == NULL || (cache->type == GGML_TYPE_F32 && cache->ne[0] == max_pad && cache->ne[1] == x->ne[1] &&
++                                  cache->ne[2] == x->ne[2] && cache->ne[3] == 1));
+     GGML_ASSERT(cache != NULL || max_pad == 0);
+     GGML_ASSERT(bias == NULL || ggml_nelements(bias) == (int64_t) cout * groups);
+     GGML_ASSERT((alpha == NULL) == (alpha_inv == NULL));
+     GGML_ASSERT(residual == NULL || (residual->type == GGML_TYPE_F32 && residual->ne[0] == x->ne[0] &&
+-                                     residual->ne[1] == (residual_shared ? cout : (int64_t) cout * groups)));
++                                     residual->ne[1] == (residual_shared ? cout : (int64_t) cout * groups) &&
++                                     residual->ne[2] == x->ne[2] && residual->ne[3] == 1));
+     const int64_t t_out = x->ne[0];
+ 
+-    struct ggml_tensor * result = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, t_out, (int64_t) cout * groups, 1);
++    struct ggml_tensor * result = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, t_out, (int64_t) cout * groups, x->ne[2]);
+     int32_t params[14] = { kernels[0], dilations[0], snake_channels, alpha ? 1 : 0, 0,
+                            groups, kernels[1 % groups], kernels[2 % groups], dilations[1 % groups], dilations[2 % groups],
+                            shared_input ? 1 : 0, residual_shared ? 1 : 0, cout, max_pad };

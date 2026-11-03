@@ -26,7 +26,12 @@ struct MagpieBatchRequestLimits {
 
 class MagpieBatchRequestFactory {
    public:
-    MagpieBatchRequestFactory(magpietts_model& magpie, const nanocodec::NanoCodecModel& codec);
+    // codec_batch_streams > 0: requests decode their audio in a shared batched codec with that
+    // many stream slots (chunks of up to codec_chunk_frames frames); otherwise each request
+    // decodes its own chunks on one of a few codec streams.
+    MagpieBatchRequestFactory(
+        magpietts_model& magpie, const nanocodec::NanoCodecModel& codec,
+        int codec_batch_streams = 0, int codec_chunk_frames = 0);
     ~MagpieBatchRequestFactory();
 
     MagpieBatchRequestFactory(const MagpieBatchRequestFactory&) = delete;

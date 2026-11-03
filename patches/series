@@ -19,3 +19,4 @@ llama-keep-equal-length-recurrent-sequences-in-one-ubatch.patch
 llama-enable-nvfp4-in-llama-quantize.patch
 llama-read-the-gemma-3-attention-scale-from-gguf.patch
 ggml-cpu-run-the-fused-attention-op-on-the-cpu.patch
+ggml-cuda-batch-dimension-for-the-fused-nanocodec-convolutions.patch

@@ -135,6 +135,12 @@ class MagpieTtsRuntime::Impl {
             batch.max_slots = config_.max_batch_size;
             batch.use_cfg = config_.use_cfg;
             batch.static_batching = config_.static_batching;
+            batch.fused_streams = config_.fused_streams;
+            batch.prefill_batch_size = config_.prefill_batch_size;
+            batch.prefill_wait_ms = config_.prefill_wait_ms;
+            batch.prefill_stream = config_.prefill_stream;
+            batch.codec_batching = config_.codec_batching;
+            batch.codec_chunk_frames = config_.chunk_frames;
             batch.threads = config_.threads > 0 ? config_.threads : 8;
             std::string error;
             batch_ = stream_->createBatchEngine(batch, &error);

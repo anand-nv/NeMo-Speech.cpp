@@ -1883,3 +1883,88 @@ magpietts_batch_lt_fused_run(
     }
     return true;
 }
+
+int
+magpietts_batch_decoder_fused_grid(const magpietts_batch_decoder_fused* f) {
+    return f ? f->grid : 0;
+}
+
+int
+magpietts_batch_lt_fused_grid(const magpietts_batch_lt_fused* f) {
+    return f ? f->grid : 0;
+}
+
+// ---------------------------------------------------------------------------------------
+// batched sampling for the ggml local transformer (one block per row)
+// ---------------------------------------------------------------------------------------
+namespace {
+
+struct bs_args {
+    const float* logits;
+    int vocab, uncond_row0, round, n_rounds, codebook_size, eos_id;
+    const magpietts_cuda_sampling_config* configs;
+    int32_t* codes;
+    int32_t* argmax;
+    int32_t* next_input;
+};
+
+template <int items_per_thread>
+__global__ void
+__launch_bounds__(MAGPIETTS_CUDA_BLOCK_SIZE) bs_kernel(const bs_args a) {
+    __shared__ magpietts_sample_fast_shared sh;
+    const int row = (int)blockIdx.x;
+    const magpietts_cuda_sampling_config config = a.configs[row];
+    // the fused local transformer's sampling step, unchanged
+    int k = config.top_k < a.vocab ? config.top_k : a.vocab;
+    if (k < 1)
+        k = 1;
+    if (k > MAGPIETTS_CUDA_MAX_FAST_TOPK)
+        k = MAGPIETTS_CUDA_MAX_FAST_TOPK;
+    const float* cond = a.logits + (size_t)row * a.vocab;
+    const float* uncond =
+        config.use_cfg ? a.logits + (size_t)(a.uncond_row0 + row) * a.vocab : cond;
+    int32_t* code_out = a.codes + (size_t)row * a.n_rounds + a.round;
+    magpietts_sample_codebook_fast_block<items_per_thread>(
+        cond, uncond, a.vocab, a.codebook_size, a.eos_id, config, a.round, k, nullptr, nullptr,
+        code_out, a.argmax + (size_t)row * a.n_rounds + a.round, sh);
+    if (a.next_input && threadIdx.x == 0)
+        a.next_input[row] = *code_out;
+}
+
+}  // namespace
+
+bool
+magpietts_batch_sample_round(
+    cudaStream_t stream, const float* logits, int vocab, int rows, int uncond_row0,
+    const void* configs, int round, int n_rounds, int audio_codebook_size, int audio_eos_id,
+    int32_t* codes, int32_t* argmax, int32_t* next_input, char* error, size_t error_size) {
+    if (rows <= 0 || vocab <= 0 || vocab > MAGPIETTS_CUDA_MAX_VOCAB || !logits || !configs ||
+        !codes || !argmax) {
+        ltf_set_error(error, error_size, "batched sampling: invalid arguments");
+        return false;
+    }
+    bs_args a{};
+    a.logits = logits;
+    a.vocab = vocab;
+    a.uncond_row0 = uncond_row0;
+    a.round = round;
+    a.n_rounds = n_rounds;
+    a.codebook_size = audio_codebook_size;
+    a.eos_id = audio_eos_id;
+    a.configs = static_cast<const magpietts_cuda_sampling_config*>(configs);
+    a.codes = codes;
+    a.argmax = argmax;
+    a.next_input = next_input;
+    if (vocab <= MAGPIETTS_CUDA_SMALL_VOCAB)
+        bs_kernel<MAGPIETTS_CUDA_SMALL_ITEMS_PER_THREAD>
+            <<<rows, MAGPIETTS_CUDA_BLOCK_SIZE, 0, stream>>>(a);
+    else
+        bs_kernel<MAGPIETTS_CUDA_MAX_ITEMS_PER_THREAD>
+            <<<rows, MAGPIETTS_CUDA_BLOCK_SIZE, 0, stream>>>(a);
+    const cudaError_t err = cudaGetLastError();
+    if (err != cudaSuccess) {
+        ltf_set_error(error, error_size, cudaGetErrorString(err));
+        return false;
+    }
+    return true;
+}
