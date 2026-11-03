@@ -238,6 +238,12 @@ run_bench(int argc, char** argv) {
             options.repetitions = parse_int(value(), arg, 1, 10000);
         } else if (arg == "--per-stream") {
             options.per_stream = parse_int(value(), arg, 1, 100000);
+        } else if (arg == "--offset-ms") {
+            options.offset_ms = parse_double(value(), arg);
+            if (options.offset_ms < 0.0)
+                throw std::invalid_argument("--offset-ms must not be negative");
+        } else if (arg == "--steady-state") {
+            options.steady_state = true;
         } else if (arg == "--warmup") {
             options.warmup = parse_int(value(), arg, 0, 1000);
         } else if (arg == "--device" || arg == "--backend") {
@@ -320,25 +326,43 @@ run_bench(int argc, char** argv) {
                 : inputs * static_cast<size_t>(options.repetitions);
         std::vector<ItemResult> results(work_count);
         std::vector<double> latency(work_count);
+        // per item: submission and completion, seconds since the run started; per stream: its
+        // first submission and the moment it found no work left
+        std::vector<double> item_begin(work_count, 0.0), item_end(work_count, 0.0);
+        std::vector<double> stream_first(concurrency, 0.0), stream_exit(concurrency, 0.0);
         std::atomic<size_t> next{0};
         std::mutex failure_mutex;
         std::exception_ptr failure;
         const auto started = Clock::now();
+        auto since_start = [&]() {
+            return std::chrono::duration<double>(Clock::now() - started).count();
+        };
         std::vector<std::thread> workers;
         workers.reserve(concurrency);
         for (int thread = 0; thread < concurrency; ++thread) {
-            workers.emplace_back([&] {
+            workers.emplace_back([&, thread] {
                 try {
+                    if (options.offset_ms > 0.0)
+                        std::this_thread::sleep_for(
+                            std::chrono::duration<double, std::milli>(options.offset_ms * thread));
+                    bool first = true;
                     for (;;) {
                         const size_t work = next.fetch_add(1);
-                        if (work >= work_count)
+                        if (work >= work_count) {
+                            stream_exit[thread] = since_start();
                             return;
+                        }
                         const auto item_start = Clock::now();
+                        item_begin[work] = since_start();
+                        if (first)
+                            stream_first[thread] = item_begin[work];
+                        first = false;
                         results[work] = workload->run(work % inputs);
                         results[work].input = work % inputs;
                         latency[work] =
                             std::chrono::duration<double, std::milli>(Clock::now() - item_start)
                                 .count();
+                        item_end[work] = since_start();
                     }
                 }
                 catch (...) {
@@ -371,15 +395,70 @@ run_bench(int argc, char** argv) {
 
         Value run(Value::Object{});
         run["concurrency"] = concurrency;
-        run["items"] = static_cast<double>(work_count);
-        run["wall_seconds"] = wall_seconds;
-        run["items_per_second"] = work_count / wall_seconds;
-        run["latency_ms"] = distribution(latency);
-        Value metrics = metric_distributions(all_items);
-        if (!metrics.object().empty())
-            run["metrics"] = std::move(metrics);
-        run[workload->mismatch_key()] = total_mismatches;
-        workload->summarize_run(run, results, wall_seconds);
+        if (options.offset_ms > 0.0)
+            run["offset_ms"] = options.offset_ms;
+        if (options.steady_state) {
+            // Steady state: from the moment every stream is busy (the last stream's first
+            // submission) until one runs out of work. Latencies are those of the requests
+            // submitted in the window; throughput is the output of the requests completed in it
+            // over its length.
+            const double window_begin = *std::max_element(stream_first.begin(), stream_first.end());
+            const double window_end = *std::min_element(stream_exit.begin(), stream_exit.end());
+            if (window_end <= window_begin)
+                throw std::runtime_error(
+                    "--steady-state: no window with every stream busy; send more requests per "
+                    "stream (--per-stream) or lower --offset-ms");
+            std::vector<const ItemResult*> submitted, completed_items;
+            std::vector<ItemResult> completed;
+            std::vector<double> window_latency;
+            for (size_t work = 0; work < work_count; ++work) {
+                if (item_begin[work] >= window_begin && item_begin[work] < window_end) {
+                    submitted.push_back(&results[work]);
+                    window_latency.push_back(latency[work]);
+                }
+                if (item_end[work] > window_begin && item_end[work] <= window_end)
+                    completed.push_back(results[work]);
+            }
+            if (submitted.empty() || completed.empty())
+                throw std::runtime_error(
+                    "--steady-state: the window holds no complete request; send more requests "
+                    "per stream (--per-stream)");
+            const double window_seconds = window_end - window_begin;
+            Value full(Value::Object{});
+            full["items"] = static_cast<double>(work_count);
+            full["wall_seconds"] = wall_seconds;
+            full["latency_ms"] = distribution(latency);
+            Value full_metrics = metric_distributions(all_items);
+            if (!full_metrics.object().empty())
+                full["metrics"] = std::move(full_metrics);
+            workload->summarize_run(full, results, wall_seconds);
+            run["full_run"] = std::move(full);
+            Value window(Value::Object{});
+            window["begin_s"] = window_begin;
+            window["end_s"] = window_end;
+            window["submitted"] = static_cast<double>(submitted.size());
+            window["completed"] = static_cast<double>(completed.size());
+            run["steady_window"] = std::move(window);
+            run["items"] = static_cast<double>(submitted.size());
+            run["wall_seconds"] = window_seconds;
+            run["items_per_second"] = completed.size() / window_seconds;
+            run["latency_ms"] = distribution(window_latency);
+            Value metrics = metric_distributions(submitted);
+            if (!metrics.object().empty())
+                run["metrics"] = std::move(metrics);
+            run[workload->mismatch_key()] = total_mismatches;
+            workload->summarize_run(run, completed, window_seconds);
+        } else {
+            run["items"] = static_cast<double>(work_count);
+            run["wall_seconds"] = wall_seconds;
+            run["items_per_second"] = work_count / wall_seconds;
+            run["latency_ms"] = distribution(latency);
+            Value metrics = metric_distributions(all_items);
+            if (!metrics.object().empty())
+                run["metrics"] = std::move(metrics);
+            run[workload->mismatch_key()] = total_mismatches;
+            workload->summarize_run(run, results, wall_seconds);
+        }
         if (!input_columns.empty()) {
             Value::Array per_input;
             for (size_t index = 0; index < inputs; ++index) {
@@ -475,6 +554,10 @@ print_bench_help(const char* program) {
         "  -c, --concurrency LIST  Comma-separated levels (default: asr/diarize 1,2,4;\n"
         "                          tts/translate 1)\n"
         "  -n, --repetitions N     Corpus repetitions per level (default: 3)\n"
+        "  --offset-ms MS          Stream i starts i * MS after stream 0 (no opening burst)\n"
+        "  --steady-state          Report the window in which every stream is busy: latencies\n"
+        "                          of the requests submitted in it, throughput of those\n"
+        "                          completed in it\n"
         "  --per-stream N          Instead: each concurrent stream sends N requests,\n"
         "                          cycling through the inputs\n"
         "  --warmup N              Timed-input warmup iterations (default: 1)\n"

@@ -23,7 +23,9 @@ using json::Value;
 struct CommonOptions {
     std::vector<int> concurrency;
     int repetitions = 3;
-    int per_stream = 0;  // > 0: requests per concurrent stream (cycling inputs)
+    int per_stream = 0;         // > 0: requests per concurrent stream (cycling inputs)
+    double offset_ms = 0.0;     // stream i starts i * offset_ms after stream 0
+    bool steady_state = false;  // statistics over the window in which every stream is busy
     int warmup = 1;
     int gpu = 0;
     std::string device = "auto";
