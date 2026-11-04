@@ -92,6 +92,9 @@ class IMagpieBatchRequest {
     virtual bool finish() = 0;
     // Stop the audio output after a failure or cancellation.
     virtual void abort() = 0;
+    // After a step: hand the audio chunks the request completed to a batched codec (staged until
+    // the scheduler's codec commit). No-op without one.
+    virtual void stageCodecChunks() {}
 };
 
 // The model side: per-slot prefill, batched decode steps.
@@ -204,6 +207,8 @@ class MagpieBatchScheduler {
     void waitIdle();
 
     MagpieBatchStats stats() const;
+    // Called after the requests staged their audio chunks for a step (batched codec commit).
+    void setCodecCommit(std::function<void()> commit) { codec_commit_ = std::move(commit); }
     // Slot of an active request (-1 otherwise); for tests.
     int slotOf(int64_t id) const;
 
@@ -241,6 +246,7 @@ class MagpieBatchScheduler {
     void fail(const EntryPtr& e);
     void finishAsync(const EntryPtr& e);
     void reapFinishers(bool all);
+    void stageCodec();
     void removeActive(const EntryPtr& e);
 
     IMagpieBatchBackend& backend_;
@@ -270,6 +276,7 @@ class MagpieBatchScheduler {
     std::vector<Finisher> finishers_;
     std::atomic<int> finishing_{0};
     std::vector<int64_t> slot_owner_;  // slot -> request id (or 0), read by slotOf
+    std::function<void()> codec_commit_;  // batched codec commit after a step
 
     // asynchronous batched prefill: the scheduler thread owns job_ except while job_state_ is
     // Queued (the prefill thread computes it)

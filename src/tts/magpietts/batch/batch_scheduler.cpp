@@ -713,10 +713,26 @@ MagpieBatchScheduler::runOnce() {
     admit();
     bool did = runPrefills();
     did = runDecode() || did;
+    if (did) {
+        stageCodec();
+    }
     if (!did) {
         idle_.notify_all();
     }
     return did;
+}
+
+void
+MagpieBatchScheduler::stageCodec() {
+    // the audio chunks this step completed, one codec batch for all requests
+    for (const EntryPtr& e : active_) {
+        if (e->phase == Phase::Decode) {
+            e->request->stageCodecChunks();
+        }
+    }
+    if (codec_commit_) {
+        codec_commit_();
+    }
 }
 
 void

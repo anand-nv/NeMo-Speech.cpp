@@ -1892,6 +1892,12 @@ MagpieDecoder::prefillPair(
         staging, attention, backend, keep_allocr, &uncond_prefill_cache_, cross_allocr);
 }
 
+const magpietts_uncond_prefill_cache*
+MagpieDecoder::uncondPrefillCache() const {
+    return uncond_prefill_cache_.ready.load(std::memory_order_acquire) ? &uncond_prefill_cache_
+                                                                        : nullptr;
+}
+
 const ggml_tensor*
 MagpieDecoder::uncondPrefillHidden() const {
     return uncond_prefill_cache_.ready.load(std::memory_order_acquire)

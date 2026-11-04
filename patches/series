@@ -20,3 +20,5 @@ llama-enable-nvfp4-in-llama-quantize.patch
 llama-read-the-gemma-3-attention-scale-from-gguf.patch
 ggml-cpu-run-the-fused-attention-op-on-the-cpu.patch
 ggml-cuda-batch-dimension-for-the-fused-nanocodec-convolutions.patch
+ggml-cuda-slot-cross-attention-over-persistent-key-value-arenas.patch
+ggml-cuda-cascade-attention-over-a-shared-prefix-lane-of-the-cached-attention-arena.patch

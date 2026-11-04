@@ -1491,8 +1491,9 @@ dequantize_tokens_padded(
 static bool
 decode_eval(
     const nc_model& model, const std::vector<std::array<int32_t, 8>>& frames, int threads,
-    std::vector<float>& audio) {
+    std::vector<float>& audio, ggml_backend_t compute_backend = nullptr) {
     const ggml_nvtx::range nvtx_range("nanocodec_decode_eval");
+    ggml_backend_t backend = compute_backend ? compute_backend : model.backend;
     const nc_hparams& h = model.hparams;
     std::vector<float> latent;
     try {
@@ -1553,14 +1554,14 @@ decode_eval(
         ggml_backend_tensor_set(inp, latent.data(), 0, latent.size() * sizeof(float));
     }
 
-    if (ggml_backend_is_cpu(model.backend)) {
-        ggml_backend_cpu_set_n_threads(model.backend, threads);
+    if (ggml_backend_is_cpu(backend)) {
+        ggml_backend_cpu_set_n_threads(backend, threads);
     }
 
     ggml_status status = GGML_STATUS_FAILED;
     {
         const ggml_nvtx::range nvtx_compute("nanocodec_graph_compute");
-        status = ggml_backend_graph_compute(model.backend, gf);
+        status = ggml_backend_graph_compute(backend, gf);
     }
     if (status != GGML_STATUS_SUCCESS) {
         fprintf(stderr, "ggml graph compute failed: %s\n", ggml_status_to_string(status));
@@ -2182,11 +2183,12 @@ NanoCodecDecoder::NanoCodecDecoder(const NanoCodecModel& model) : model_(&model)
 
 bool
 NanoCodecDecoder::decode(
-    const NanoCodecFrames& frames, int threads, std::vector<float>& audio) const {
+    const NanoCodecFrames& frames, int threads, std::vector<float>& audio,
+    ggml_backend_t backend) const {
     if (!require_loaded(model_)) {
         return false;
     }
-    return decode_eval(model_->impl_->model, frames, threads, audio);
+    return decode_eval(model_->impl_->model, frames, threads, audio, backend);
 }
 
 bool
@@ -2240,10 +2242,12 @@ NanoCodecDecoder::decodeStreamAll(
 struct NanoCodecBatchDecoder::Impl {
     struct Job {
         int slot = -1;
-        const NanoCodecFrames* frames = nullptr;
-        std::vector<float>* audio = nullptr;
-        bool done = false;
+        uint64_t seq = 0;  // the chunk's position in its stream
+        NanoCodecFrames frames;
+        int keep_frames = 0;  // frames whose audio is returned (the rest is padding)
+        Done done;
         bool ok = false;
+        std::vector<float> audio;
     };
     // One persistent graph per (chunk frames, batch bucket).
     struct Graph {
@@ -2271,13 +2275,15 @@ struct NanoCodecBatchDecoder::Impl {
     std::vector<float> latent_host, audio_host;
     std::vector<int32_t> slot_host;
 
-    std::mutex mutex;  // queue, slots, fresh
-    std::condition_variable has_work, job_done;
-    std::vector<Job*> queue;
+    std::mutex mutex;  // queue, staged, slots
+    std::condition_variable has_work;
+    std::vector<Job> queue;   // submitted, in submission order
+    std::vector<Job> staged;  // held until commit()
+    uint64_t version = 0;     // bumped by every submission (wakes the service)
     std::vector<bool> in_use, fresh;  // fresh: history must be zeroed before the next chunk
+    std::vector<uint64_t> next_seq, expected_seq;  // per slot: assigned / next to decode
     bool stopping = false;
     std::thread thread;
-
     Impl(const NanoCodecModel& m, int streams, int chunk)
         : owner(m), max_streams(std::max(1, streams)), max_chunk_frames(std::max(1, chunk)) {}
     ~Impl() {
@@ -2432,12 +2438,12 @@ struct NanoCodecBatchDecoder::Impl {
             std::vector<float> one;
             for (int i = 0; i < n && ok; ++i) {
                 try {
-                    dequantize_tokens_into(h, *jobs[(size_t)i]->frames, frames, one);
+                    dequantize_tokens_into(h, jobs[(size_t)i]->frames, frames, one);
+                    jobs[(size_t)i]->ok = true;
                 }
                 catch (const std::exception& e) {
                     fprintf(stderr, "NanoCodec batch: %s\n", e.what());
-                    jobs[(size_t)i]->ok = false;
-                    jobs[(size_t)i]->done = true;  // decoded below with a silent row
+                    jobs[(size_t)i]->ok = false;  // decoded below with a silent row
                     one.assign(per, 0.0f);
                 }
                 std::copy(one.begin(), one.end(), latent_host.begin() + (ptrdiff_t)(per * i));
@@ -2458,55 +2464,105 @@ struct NanoCodecBatchDecoder::Impl {
             }
         }
         const size_t samples = ok ? (size_t)g->audio->ne[0] : 0;
+        const size_t per_frame = samples / (size_t)frames;
         std::lock_guard<std::mutex> lock(mutex);
         for (int i = 0; i < n; ++i) {
             Job* j = jobs[(size_t)i];
-            if (j->done) {  // failed to dequantize
-                fresh[(size_t)j->slot] = true;
-                continue;
-            }
-            j->ok = ok;
-            if (ok) {
-                j->audio->assign(
-                    audio_host.begin() + (ptrdiff_t)(samples * i),
-                    audio_host.begin() + (ptrdiff_t)(samples * (i + 1)));
-                if (!is_finite_audio(*j->audio)) {
+            j->ok = j->ok && ok;
+            if (j->ok) {
+                // the padding is checked too: it went into the history
+                const auto row = audio_host.begin() + (ptrdiff_t)(samples * i);
+                if (!std::all_of(
+                        row, row + (ptrdiff_t)samples, [](float v) { return std::isfinite(v); })) {
                     fprintf(stderr, "NanoCodec batch: non-finite audio in slot %d\n", j->slot);
                     j->ok = false;
+                } else {
+                    j->audio.assign(row, row + (ptrdiff_t)(per_frame * (size_t)j->keep_frames));
                 }
             }
             if (!j->ok) {
                 fresh[(size_t)j->slot] = true;  // the history now holds this chunk
             }
-            j->done = true;
+            ++expected_seq[(size_t)j->slot];
         }
+    }
+
+    // The next chunk of every stream that has one queued (its sequence number is the stream's
+    // next), in submission order; the others stay queued.
+    std::vector<Job> takeBatchLocked() {
+        std::vector<Job> batch, rest;
+        std::vector<bool> taken(in_use.size() + 1, false);
+        for (Job& j : queue) {
+            const size_t slot = (size_t)j.slot;
+            if (!taken[slot] && j.seq == expected_seq[slot]) {
+                taken[slot] = true;
+                batch.push_back(std::move(j));
+            } else {
+                rest.push_back(std::move(j));
+            }
+        }
+        queue.swap(rest);
+        return batch;
     }
 
     void loop() {
         for (;;) {
-            std::vector<Job*> jobs;
+            std::vector<Job> jobs;
             {
                 std::unique_lock<std::mutex> lock(mutex);
-                has_work.wait(lock, [&] { return stopping || !queue.empty(); });
-                if (queue.empty()) {
-                    return;  // stopping
+                for (;;) {
+                    jobs = takeBatchLocked();
+                    if (!jobs.empty() || stopping) {
+                        break;
+                    }
+                    const uint64_t seen = version;
+                    has_work.wait(lock, [&] { return stopping || version != seen; });
                 }
-                jobs.swap(queue);  // everything submitted while the last batch ran
-            }
-            const ggml_nvtx::range nvtx_range("nanocodec_batch_decode");
-            std::map<int, std::vector<Job*>> by_frames;
-            for (Job* j : jobs) by_frames[(int)j->frames->size()].push_back(j);
-            for (auto& [frames, group] : by_frames) {
-                const size_t cap = (size_t)buckets.back();
-                for (size_t start = 0; start < group.size(); start += cap) {
-                    const std::vector<Job*> part(
-                        group.begin() + (ptrdiff_t)start,
-                        group.begin() + (ptrdiff_t)std::min(group.size(), start + cap));
-                    runBatch(part, frames);
+                if (jobs.empty()) {  // stopping: fail what never became decodable
+                    jobs.swap(queue);
+                    for (Job& j : staged) jobs.push_back(std::move(j));
+                    staged.clear();
+                    lock.unlock();
+                    for (Job& j : jobs)
+                        if (j.done)
+                            j.done(false, {});
+                    return;
                 }
             }
-            job_done.notify_all();
+            {
+                const ggml_nvtx::range nvtx_range("nanocodec_batch_decode");
+                std::map<int, std::vector<Job*>> by_frames;
+                for (Job& j : jobs) by_frames[(int)j.frames.size()].push_back(&j);
+                for (auto& [frames, group] : by_frames) {
+                    const size_t cap = (size_t)buckets.back();
+                    for (size_t start = 0; start < group.size(); start += cap) {
+                        const std::vector<Job*> part(
+                            group.begin() + (ptrdiff_t)start,
+                            group.begin() + (ptrdiff_t)std::min(group.size(), start + cap));
+                        runBatch(part, frames);
+                    }
+                }
+            }
+            for (Job& j : jobs) j.done(j.ok, std::move(j.audio));
         }
+    }
+
+    // Queue a chunk (staged until commit, or at once); its sequence number is assigned now.
+    void add(int slot, NanoCodecFrames frames, int keep_frames, Done done, bool stage) {
+        Job j;
+        j.slot = slot;
+        j.frames = std::move(frames);
+        j.keep_frames = keep_frames;
+        j.done = std::move(done);
+        std::lock_guard<std::mutex> lock(mutex);
+        j.seq = next_seq[(size_t)slot]++;
+        if (stage) {
+            staged.push_back(std::move(j));
+            return;
+        }
+        queue.push_back(std::move(j));
+        ++version;
+        has_work.notify_one();
     }
 };
 
@@ -2546,6 +2602,8 @@ NanoCodecBatchDecoder::init(std::string* error) {
     impl_->buckets.push_back(impl_->max_streams);
     impl_->in_use.assign((size_t)impl_->max_streams, false);
     impl_->fresh.assign((size_t)impl_->max_streams + 1, true);
+    impl_->next_seq.assign((size_t)impl_->max_streams + 1, 0);
+    impl_->expected_seq.assign((size_t)impl_->max_streams + 1, 0);
     // the first graph creates and allocates the state arenas
     if (!impl_->graph(impl_->max_chunk_frames, 1)) {
         return fail("graph construction failed");
@@ -2561,6 +2619,8 @@ NanoCodecBatchDecoder::acquire() {
         if (!impl_->in_use[(size_t)s]) {
             impl_->in_use[(size_t)s] = true;
             impl_->fresh[(size_t)s] = true;
+            impl_->next_seq[(size_t)s] = 0;
+            impl_->expected_seq[(size_t)s] = 0;
             return s;
         }
     }
@@ -2576,25 +2636,64 @@ NanoCodecBatchDecoder::release(int slot) {
 }
 
 bool
+NanoCodecBatchDecoder::valid(int slot, size_t frames) const {
+    if (slot < 0 || slot >= impl_->max_streams || frames == 0 ||
+        (int)frames > impl_->max_chunk_frames) {
+        fprintf(stderr, "NanoCodec batch: invalid chunk (slot %d, %zu frames)\n", slot, frames);
+        return false;
+    }
+    return true;
+}
+
+void
+NanoCodecBatchDecoder::stage(int slot, NanoCodecFrames frames, int keep_frames, Done done) {
+    if (!valid(slot, frames.size())) {
+        done(false, {});
+        return;
+    }
+    impl_->add(slot, std::move(frames), keep_frames, std::move(done), true);
+}
+
+void
+NanoCodecBatchDecoder::commit() {
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    if (impl_->staged.empty()) {
+        return;
+    }
+    for (auto& j : impl_->staged) impl_->queue.push_back(std::move(j));
+    impl_->staged.clear();
+    ++impl_->version;
+    impl_->has_work.notify_one();
+}
+
+void
+NanoCodecBatchDecoder::submit(int slot, NanoCodecFrames frames, int keep_frames, Done done) {
+    if (!valid(slot, frames.size())) {
+        done(false, {});
+        return;
+    }
+    impl_->add(slot, std::move(frames), keep_frames, std::move(done), false);
+}
+
+bool
 NanoCodecBatchDecoder::decode(int slot, const NanoCodecFrames& frames, std::vector<float>& audio) {
     if (frames.empty()) {
         audio.clear();
         return true;
     }
-    if (slot < 0 || slot >= impl_->max_streams || (int)frames.size() > impl_->max_chunk_frames) {
-        fprintf(
-            stderr, "NanoCodec batch: invalid chunk (slot %d, %zu frames)\n", slot, frames.size());
-        return false;
-    }
-    Impl::Job job;
-    job.slot = slot;
-    job.frames = &frames;
-    job.audio = &audio;
-    std::unique_lock<std::mutex> lock(impl_->mutex);
-    impl_->queue.push_back(&job);
-    impl_->has_work.notify_one();
-    impl_->job_done.wait(lock, [&] { return job.done; });
-    return job.ok;
+    std::mutex m;
+    std::condition_variable cv;
+    bool finished = false, ok = false;
+    submit(slot, frames, (int)frames.size(), [&](bool good, std::vector<float>&& out) {
+        std::lock_guard<std::mutex> lock(m);
+        ok = good;
+        audio = std::move(out);
+        finished = true;
+        cv.notify_one();
+    });
+    std::unique_lock<std::mutex> lock(m);
+    cv.wait(lock, [&] { return finished; });
+    return ok;
 }
 
 }  // namespace nemo_speech::tts::nanocodec

@@ -1,0 +1,420 @@
+From: Anand Joseph <anajoseph@nvidia.com>
+Subject: ggml-cuda: cascade attention over a shared prefix lane of the cached attention arena
+
+
+diff --git a/ggml/include/ggml.h b/ggml/include/ggml.h
+index 30ff3ec600661ed3e3753598080a971e611588b8..1bbdef0d2120c9a8f8bdc3eb633f5a463080e4e1 100644
+--- a/ggml/include/ggml.h
++++ b/ggml/include/ggml.h
+@@ -2596,6 +2596,27 @@ extern "C" {
+             float                 scale,
+             bool                  merge_heads);
+ 
++    // ggml_fused_attn_cached with a shared prefix: cache_state is [batch, 3], its third column
++    // the number of cached rows of each item (0 for none) that also sit, bit-identical and at
++    // the same physical rows, in arena lane `prefix_lane` (the newest such rows of the item's
++    // circular cache: physical rows [cache_len - n, cache_len)). The CUDA q=1, d_k=64 path
++    // attends those rows once for all the items sharing them (cascade attention: one pass over
++    // the shared rows per head and group of items, merged with each item's remaining keys); the
++    // item's own rows must stay valid since any other kernel ignores the prefix.
++    GGML_API struct ggml_tensor * ggml_fused_attn_cached_prefix(
++            struct ggml_context * ctx,
++            struct ggml_tensor  * q,
++            struct ggml_tensor  * k,
++            struct ggml_tensor  * v,
++            struct ggml_tensor  * mask,
++            struct ggml_tensor  * kv_cache,
++            struct ggml_tensor  * slot_ids,
++            struct ggml_tensor  * cache_state,
++            int64_t               cache_len,
++            float                 scale,
++            bool                  merge_heads,
++            int                   prefix_lane);
++
+     // Single-query cross-attention over per-slot key/value arenas (CUDA only).
+     // q: [d_k*n_head, batch] F32. k_arena/v_arena: [d_k*n_head*kv_cap, layers, slots] F32, the
+     // keys of slot s, layer `layer` being kv_cap feat-major rows. slot_ids: [batch] I32,
+diff --git a/ggml/src/ggml-cpu/ops.cpp b/ggml/src/ggml-cpu/ops.cpp
+index c4914038546121bd5cb746f45645e4aefdecddc8..2fec87922169c551d3340a3eaee6fa6823d76cbf 100644
+--- a/ggml/src/ggml-cpu/ops.cpp
++++ b/ggml/src/ggml-cpu/ops.cpp
+@@ -12404,7 +12404,7 @@ void ggml_compute_forward_fused_attn(const ggml_compute_params * params, ggml_te
+     const int64_t cache_sp = cached ? (int64_t) (kv_cache->nb[2] / sizeof(float)) : 0;
+     const int32_t * slots       = cached ? (const int32_t *) slot_ids->data : nullptr;
+     const int32_t * ring_heads  = cached ? (const int32_t *) cache_state->data : nullptr;
+-    const int32_t * active_lens = cached && cache_state->ne[1] == 2 ? ring_heads + cache_state->ne[0] : nullptr;
++    const int32_t * active_lens = cached && cache_state->ne[1] >= 2 ? ring_heads + cache_state->ne[0] : nullptr;
+ 
+     // Mask strides (in floats) between queries and between batch items, as in the CUDA kernel.
+     const int64_t m_sq = (mask && !cached && mask->ne[1] == q_len && q_len > 1)
+diff --git a/ggml/src/ggml-cuda/fused-attention.cu b/ggml/src/ggml-cuda/fused-attention.cu
+index 84e1c0255ad34c985cd6e4699e535ba7b7123d63..e33da590fc45641bf8398ff6d71a31bc1f2132a7 100644
+--- a/ggml/src/ggml-cuda/fused-attention.cu
++++ b/ggml/src/ggml-cuda/fused-attention.cu
+@@ -140,6 +140,156 @@ static __global__ void fused_attention_update_cache_kernel(
+     }
+ }
+ 
++// Shared-prefix part of the q=1, d_k=64 cached attention (cascade attention). Items whose
++// oldest prefix_rows[b] cached rows equal rows [cache_len - prefix_rows[b], cache_len) of one
++// shared arena lane attend those rows here. grid = (n_head, item groups, prefix tiles): a block
++// takes one head, PREFIX_ITEMS items and the PREFIX_TILE_KEYS shared rows of tile k (counted
++// back from cache_len), stages them in shared memory once for all its items and writes an
++// unnormalized (context, max, sum) partial per (item, head) at partial slot first_slot + k.
++// An item uses tiles k < ceil(prefix_rows / PREFIX_TILE_KEYS); the split kernel attends its
++// remaining keys and combines.
++static constexpr int PREFIX_ITEMS = 32;
++static constexpr int PREFIX_KEYS = 32;            // keys staged at a time
++static constexpr int PREFIX_TILE_KEYS = 2 * PREFIX_KEYS;  // keys per block
++
++static __global__ void __launch_bounds__(256)
++fused_cached_attention_prefix_kernel(
++        const float * __restrict__ Q, const float * __restrict__ Kcache,
++        const float * __restrict__ Vcache, const int32_t * __restrict__ prefix_rows,
++        int batch, int cache_len, float scale, long q_sh, long q_sb, long cache_sj,
++        long prefix_off, float * __restrict__ partials, int n_partials, int first_slot) {
++    constexpr int d_k = 64;
++    constexpr int partial_stride = d_k + 2;
++    __shared__ float query[PREFIX_ITEMS][d_k + 1];
++    __shared__ float keys[PREFIX_KEYS][d_k + 1];
++    __shared__ __align__(16) float values[PREFIX_KEYS][d_k];
++    __shared__ float probs[PREFIX_ITEMS][PREFIX_KEYS + 1];
++    __shared__ int rows_of[PREFIX_ITEMS];
++    __shared__ int max_rows;
++
++    const int h = blockIdx.x;
++    const int b0 = blockIdx.y * PREFIX_ITEMS;
++    const int tile = blockIdx.z;
++    const int tid = threadIdx.x;
++    // 8 threads per item: keys sub * 4 .. + 4 of a staged tile, features sub * 8 .. + 8
++    const int item = tid >> 3;
++    const int sub = tid & 7;
++    const int b = b0 + item;
++
++    if (tid == 0) {
++        max_rows = 0;
++    }
++    __syncthreads();
++    if (tid < PREFIX_ITEMS) {
++        const int n = b0 + tid < batch ? prefix_rows[b0 + tid] : 0;
++        rows_of[tid] = n;
++        if (n > 0) {
++            atomicMax(&max_rows, n);
++        }
++    }
++    __syncthreads();
++    if (tile * PREFIX_TILE_KEYS >= max_rows) {
++        return;  // no item of this group reaches the tile (their slots for it are never read)
++    }
++    for (int i = tid; i < PREFIX_ITEMS * d_k; i += 256) {
++        const int it = i / d_k, d = i % d_k;
++        query[it][d] = rows_of[it] > 0
++            ? Q[(size_t) (b0 + it) * q_sb + (size_t) h * q_sh + d] * scale
++            : 0.0f;
++    }
++    const int my_begin = cache_len - rows_of[item];  // first physical row this item attends
++    const int row_end = cache_len - tile * PREFIX_TILE_KEYS;
++    const int row_begin = max(cache_len - max_rows, row_end - PREFIX_TILE_KEYS);
++    const float * Kp = Kcache + prefix_off + (size_t) h * d_k;
++    const float * Vp = Vcache + prefix_off + (size_t) h * d_k;
++
++    float m = -INFINITY, l = 0.0f;
++    float acc[8] = {};
++    for (int t0 = row_begin; t0 < row_end; t0 += PREFIX_KEYS) {
++        const int n_keys = min(PREFIX_KEYS, row_end - t0);
++        // 32 keys x 64 features = 512 float4 per plane: two of each per thread, loads first
++        float4 kr[2], vr[2];
++#pragma unroll
++        for (int r = 0; r < 2; ++r) {
++            const int i = tid + r * 256;
++            const int k = i >> 4, d4 = (i & 15) * 4;
++            const bool in = k < n_keys;
++            kr[r] = in ? *reinterpret_cast<const float4 *>(Kp + (size_t) (t0 + k) * cache_sj + d4)
++                       : make_float4(0.0f, 0.0f, 0.0f, 0.0f);
++            vr[r] = in ? *reinterpret_cast<const float4 *>(Vp + (size_t) (t0 + k) * cache_sj + d4)
++                       : make_float4(0.0f, 0.0f, 0.0f, 0.0f);
++        }
++        __syncthreads();  // the previous tile's keys/values/probs are consumed
++#pragma unroll
++        for (int r = 0; r < 2; ++r) {
++            const int i = tid + r * 256;
++            const int k = i >> 4, d4 = (i & 15) * 4;
++            keys[k][d4] = kr[r].x; keys[k][d4 + 1] = kr[r].y;
++            keys[k][d4 + 2] = kr[r].z; keys[k][d4 + 3] = kr[r].w;
++            *reinterpret_cast<float4 *>(&values[k][d4]) = vr[r];
++        }
++        __syncthreads();
++
++        float s[4];
++        float tile_max = -INFINITY;
++#pragma unroll
++        for (int i = 0; i < 4; ++i) {
++            const int k = sub * 4 + i;
++            float dot = 0.0f;
++#pragma unroll 16
++            for (int d = 0; d < d_k; ++d) {
++                dot += query[item][d] * keys[k][d];
++            }
++            s[i] = k < n_keys && t0 + k >= my_begin ? dot : -INFINITY;
++            tile_max = fmaxf(tile_max, s[i]);
++        }
++#pragma unroll
++        for (int offset = 4; offset > 0; offset >>= 1) {
++            tile_max = fmaxf(tile_max, __shfl_xor_sync(0xffffffff, tile_max, offset));
++        }
++        const float m_new = fmaxf(m, tile_max);
++        const float alpha = m_new == -INFINITY ? 1.0f : __expf(m - m_new);
++        float tile_sum = 0.0f;
++#pragma unroll
++        for (int i = 0; i < 4; ++i) {
++            const float p = s[i] == -INFINITY ? 0.0f : __expf(s[i] - m_new);
++            probs[item][sub * 4 + i] = p;
++            tile_sum += p;
++        }
++#pragma unroll
++        for (int offset = 4; offset > 0; offset >>= 1) {
++            tile_sum += __shfl_xor_sync(0xffffffff, tile_sum, offset);
++        }
++        l = l * alpha + tile_sum;
++        m = m_new;
++        __syncwarp();
++#pragma unroll
++        for (int i = 0; i < 8; ++i) {
++            acc[i] *= alpha;
++        }
++        for (int k = 0; k < n_keys; ++k) {
++            const float p = probs[item][k];
++            const float4 va = *reinterpret_cast<const float4 *>(&values[k][sub * 8]);
++            const float4 vb = *reinterpret_cast<const float4 *>(&values[k][sub * 8 + 4]);
++            acc[0] += p * va.x; acc[1] += p * va.y; acc[2] += p * va.z; acc[3] += p * va.w;
++            acc[4] += p * vb.x; acc[5] += p * vb.y; acc[6] += p * vb.z; acc[7] += p * vb.w;
++        }
++    }
++
++    if (b < batch && tile * PREFIX_TILE_KEYS < rows_of[item]) {
++        float * out = partials +
++            (((size_t) b * gridDim.x + h) * n_partials + first_slot + tile) * partial_stride;
++#pragma unroll
++        for (int i = 0; i < 8; ++i) {
++            out[sub * 8 + i] = acc[i];
++        }
++        if (sub == 0) {
++            out[d_k] = m;
++            out[d_k + 1] = l;
++        }
++    }
++}
++
+ // Split-KV variant of the q=1, d_k=64 cached kernel (flash-decoding style).
+ // grid = (n_head, splits, batch). Each block scores a contiguous key range with
+ // four keys per warp-iteration (8 lanes x 8 features per key), accumulates a
+@@ -159,7 +309,8 @@ fused_cached_attention_q1_d64_split_kernel(
+         long q_sh, long q_sb, long k_sj, long k_sh, long k_sb,
+         long v_sj, long v_sh, long v_sb, long cache_sj, long cache_ss,
+         long o_sh, long o_sb, long m_sb,
+-        float * __restrict__ partials, int * __restrict__ counters, int splits) {
++        float * __restrict__ partials, int * __restrict__ counters, int splits,
++        const int32_t * __restrict__ prefix_rows, int n_partials) {
+     constexpr int d_k = 64;
+     constexpr int warps = 8;
+     constexpr int value_parts = 4;
+@@ -182,13 +333,28 @@ fused_cached_attention_q1_d64_split_kernel(
+     const T * Vh = V + (size_t) b * v_sb + (size_t) h * v_sh;
+     const int slot = Cached ? slot_ids[b] : 0;
+     const int ring_head = Cached ? ring_heads[b] : 0;
+-    const int key_begin = active_lengths ? cache_len - active_lengths[b] : 0;
++    // A shared prefix (the oldest prefix_rows[b] keys of the window) was attended by
++    // fused_cached_attention_prefix_kernel: its tiles' partials (slots splits..) join the
++    // combine, the splits cover the remaining keys.
++    const int n_prefix = Cached && prefix_rows ? prefix_rows[b] : 0;
++    const int key_begin = (active_lengths ? cache_len - active_lengths[b] : 0) + n_prefix;
++    const int n_prefix_tiles = (n_prefix + PREFIX_TILE_KEYS - 1) / PREFIX_TILE_KEYS;
+     const float * Kch = Cached ? Kcache + (size_t) slot * cache_ss + (size_t) h * d_k : nullptr;
+     const float * Vch = Cached ? Vcache + (size_t) slot * cache_ss + (size_t) h * d_k : nullptr;
+     const float * Mb = mask ? mask + (size_t) b * m_sb : nullptr;
+ 
+     const int n_keys = kv - key_begin;
+-    const int per_split = (n_keys + splits - 1) / splits;
++    // An item with a shared prefix has only its short suffix left: it uses as many splits as
++    // that needs at the launch's split size (which sized the scores in shared memory); its
++    // blocks past them exit at once.
++    const int split_cap = (kv - (active_lengths ? cache_len - active_lengths[b] : 0) + splits - 1) / splits;
++    const int item_splits =
++        n_prefix > 0 ? max(1, min(splits, (n_keys + split_cap - 1) / split_cap)) : splits;
++    if (split >= item_splits) {
++        return;
++    }
++    const int n_combined = item_splits + n_prefix_tiles;
++    const int per_split = (n_keys + item_splits - 1) / item_splits;
+     const int j0 = key_begin + split * per_split;
+     const int j1 = min(kv, j0 + per_split);
+     const int range = max(0, j1 - j0);
+@@ -276,7 +442,7 @@ fused_cached_attention_q1_d64_split_kernel(
+     __syncthreads();
+ 
+     float * out = ctx + (size_t) b * o_sb + (size_t) h * o_sh;
+-    if (splits == 1) {
++    if (n_combined == 1) {
+         if (tid < d_k) {
+             float context = value_partials[tid];
+ #pragma unroll
+@@ -288,7 +454,7 @@ fused_cached_attention_q1_d64_split_kernel(
+         return;
+     }
+ 
+-    float * my_partial = partials + (((size_t) b * gridDim.x + h) * splits + split) * partial_stride;
++    float * my_partial = partials + (((size_t) b * gridDim.x + h) * n_partials + split) * partial_stride;
+     if (tid < d_k) {
+         float context = value_partials[tid];
+ #pragma unroll
+@@ -305,22 +471,25 @@ fused_cached_attention_q1_d64_split_kernel(
+     __syncthreads();
+     if (tid == 0) {
+         const int done = atomicAdd(counters + (size_t) b * gridDim.x + h, 1);
+-        s_last = (done == splits - 1) ? 1 : 0;
++        s_last = (done == item_splits - 1) ? 1 : 0;
+     }
+     __syncthreads();
+     if (!s_last) {
+         return;
+     }
+     __threadfence();
+-    const float * all = partials + (((size_t) b * gridDim.x + h) * splits) * partial_stride;
++    const float * all = partials + (((size_t) b * gridDim.x + h) * n_partials) * partial_stride;
++    // the item's split partials (slots 0..), then its shared-prefix tiles (slots splits..)
++    auto slot_of = [&](int s) { return s < item_splits ? s : splits + (s - item_splits); };
+     if (tid < d_k) {
+         float gmax = -INFINITY;
+-        for (int s = 0; s < splits; ++s) {
+-            gmax = fmaxf(gmax, all[s * partial_stride + d_k]);
++        for (int s = 0; s < n_combined; ++s) {
++            gmax = fmaxf(gmax, all[slot_of(s) * partial_stride + d_k]);
+         }
+         float gsum = 0.0f;
+         float gctx = 0.0f;
+-        for (int s = 0; s < splits; ++s) {
++        for (int i = 0; i < n_combined; ++i) {
++            const int s = slot_of(i);
+             const float m = all[s * partial_stride + d_k];
+             if (m == -INFINITY) {
+                 continue;  // fully masked split
+@@ -1382,7 +1551,7 @@ void ggml_cuda_op_fused_attention(ggml_backend_cuda_context & ctx, ggml_tensor *
+         GGML_ASSERT(slot_ids->ne[0] == batch);
+         GGML_ASSERT(cache_state->type == GGML_TYPE_I32 && ggml_is_contiguous(cache_state));
+         GGML_ASSERT(cache_state->ne[0] == batch);
+-        GGML_ASSERT(cache_state->ne[1] == 1 || cache_state->ne[1] == 2);
++        GGML_ASSERT(cache_state->ne[1] >= 1 && cache_state->ne[1] <= 3);
+     } else {
+         GGML_ASSERT(slot_ids == nullptr);
+         GGML_ASSERT(cache_state == nullptr);
+@@ -1446,9 +1615,18 @@ void ggml_cuda_op_fused_attention(ggml_backend_cuda_context & ctx, ggml_tensor *
+     const int32_t * active_ring_heads =
+         cached ? (const int32_t *) cache_state->data : nullptr;
+     const int32_t * active_lengths =
+-        cached && cache_state->ne[1] == 2
++        cached && cache_state->ne[1] >= 2
+             ? active_ring_heads + cache_state->ne[0]
+             : nullptr;
++    // ggml_fused_attn_cached_prefix: rows also held by a shared lane (the q=1, d_k=64 path
++    // attends them once for all items sharing them; the items' own copies serve every other
++    // kernel)
++    const int prefix_lane = cached ? ggml_get_op_params_i32(dst, 2) : -1;
++    const int32_t * prefix_rows =
++        cached && cache_state->ne[1] == 3 && prefix_lane >= 0
++            ? active_ring_heads + 2 * cache_state->ne[0]
++            : nullptr;
++    const long prefix_off = prefix_rows ? (long) prefix_lane * cache_ss : 0;
+ 
+     auto update_cache = [&]() {
+         if (!cached) {
+@@ -1486,11 +1664,20 @@ void ggml_cuda_op_fused_attention(ggml_backend_cuda_context & ctx, ggml_tensor *
+             ((size_t) 64 + warps + value_partials + per_split) * sizeof(float);
+         GGML_ASSERT(split_shmem <= max_shmem);
+         const dim3 split_grid(n_head, splits, batch);
+-        ggml_cuda_pool_alloc<float> partials(ctx.pool(), (size_t) batch * n_head * splits * 66);
++        // shared-prefix tiles (bounded by the cache; blocks past an item's prefix exit early)
++        const int prefix_tiles = prefix_rows ? (cache_len + PREFIX_TILE_KEYS - 1) / PREFIX_TILE_KEYS : 0;
++        const int n_partials = splits + prefix_tiles;
++        ggml_cuda_pool_alloc<float> partials(ctx.pool(), (size_t) batch * n_head * n_partials * 66);
+         ggml_cuda_pool_alloc<int> counters(ctx.pool(), (size_t) batch * n_head);
+-        if (splits > 1) {
++        if (n_partials > 1) {
+             CUDA_CHECK(cudaMemsetAsync(counters.get(), 0, (size_t) batch * n_head * sizeof(int), stream));
+         }
++        if (prefix_rows) {
++            const dim3 prefix_grid(n_head, (batch + PREFIX_ITEMS - 1) / PREFIX_ITEMS, prefix_tiles);
++            fused_cached_attention_prefix_kernel<<<prefix_grid, 256, 0, stream>>>(
++                (const float *) q->data, cache_k, cache_v, prefix_rows, batch, cache_len, scale,
++                q_sh, q_sb, cache_sj, prefix_off, partials.get(), n_partials, splits);
++        }
+         if (k->type == GGML_TYPE_F16) {
+             fused_cached_attention_q1_d64_split_kernel<half, true>
+                 <<<split_grid, threads, split_shmem, stream>>>(
+@@ -1499,7 +1686,7 @@ void ggml_cuda_op_fused_attention(ggml_backend_cuda_context & ctx, ggml_tensor *
+                     cache_k, cache_v, active_slots, active_ring_heads, active_lengths,
+                     kv_len, cache_len, scale, q_sh, q_sb, k_sj, k_sh, k_sb,
+                     v_sj, v_sh, v_sb, cache_sj, cache_ss, o_sh, o_sb, m_sb,
+-                    partials.get(), counters.get(), splits);
++                    partials.get(), counters.get(), splits, prefix_rows, n_partials);
+         } else {
+             fused_cached_attention_q1_d64_split_kernel<float, true>
+                 <<<split_grid, threads, split_shmem, stream>>>(
+@@ -1508,7 +1695,7 @@ void ggml_cuda_op_fused_attention(ggml_backend_cuda_context & ctx, ggml_tensor *
+                     cache_k, cache_v, active_slots, active_ring_heads, active_lengths,
+                     kv_len, cache_len, scale, q_sh, q_sb, k_sj, k_sh, k_sb,
+                     v_sj, v_sh, v_sb, cache_sj, cache_ss, o_sh, o_sb, m_sb,
+-                    partials.get(), counters.get(), splits);
++                    partials.get(), counters.get(), splits, prefix_rows, n_partials);
+         }
+         update_cache();
+         return;
+diff --git a/ggml/src/ggml.c b/ggml/src/ggml.c
+index a339c3ef97ecc2ed46433cb99b810e95599d6141..ac3db8bb929854fc6dc0d6384896663b9b0daf89 100644
+--- a/ggml/src/ggml.c
++++ b/ggml/src/ggml.c
+@@ -5609,7 +5609,7 @@ static struct ggml_tensor * ggml_fused_attention_impl(
+         GGML_ASSERT(slot_ids->ne[0] == q->ne[3]);
+         GGML_ASSERT(cache_state->type == GGML_TYPE_I32 && ggml_is_contiguous(cache_state));
+         GGML_ASSERT(cache_state->ne[0] == q->ne[3]);
+-        GGML_ASSERT(cache_state->ne[1] == 1 || cache_state->ne[1] == 2);
++        GGML_ASSERT(cache_state->ne[1] >= 1 && cache_state->ne[1] <= 3);
+     } else {
+         GGML_ASSERT(cache_len == 0);
+     }
+@@ -5644,6 +5644,7 @@ static struct ggml_tensor * ggml_fused_attention_impl(
+ 
+     ggml_set_op_params(result, &scale, sizeof(scale));
+     ggml_set_op_params_i32(result, 1, (int32_t) cache_len);
++    ggml_set_op_params_i32(result, 2, -1);  // shared prefix lane (ggml_fused_attn_cached_prefix)
+ 
+     result->op     = GGML_OP_FUSED_ATTN;
+     result->src[0] = q;
+@@ -5712,6 +5713,28 @@ struct ggml_tensor * ggml_fused_attn_cached(
+         merge_heads);
+ }
+ 
++struct ggml_tensor * ggml_fused_attn_cached_prefix(
++        struct ggml_context * ctx,
++        struct ggml_tensor  * q,
++        struct ggml_tensor  * k,
++        struct ggml_tensor  * v,
++        struct ggml_tensor  * mask,
++        struct ggml_tensor  * kv_cache,
++        struct ggml_tensor  * slot_ids,
++        struct ggml_tensor  * cache_state,
++        int64_t               cache_len,
++        float                 scale,
++        bool                  merge_heads,
++        int                   prefix_lane) {
++    GGML_ASSERT(cache_state != NULL && cache_state->ne[1] == 3);
++    GGML_ASSERT(prefix_lane >= 0 && prefix_lane < kv_cache->ne[1]);
++    struct ggml_tensor * result = ggml_fused_attention_impl(
++        ctx, q, k, v, NULL, NULL, NULL, mask, kv_cache, slot_ids, cache_state, cache_len, scale,
++        merge_heads);
++    ggml_set_op_params_i32(result, 2, prefix_lane);
++    return result;
++}
++
+ struct ggml_tensor * ggml_slot_cross_attn(
+         struct ggml_context * ctx,
+         struct ggml_tensor  * q,

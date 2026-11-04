@@ -74,6 +74,19 @@ round trip. On other backends sampling happens on the host with each request's
 own random generator. Results match the serial runtime to within floating-point
 noise, but not bit for bit.
 
+Two CUDA-only kernels shorten the graph step's attention:
+- Text cross-attention is one `ggml_slot_cross_attn` per layer. It reads each
+  slot's cross-attention rows in place and only up to the row's text length,
+  instead of gathering and transposing every slot's full text capacity
+  (`fused_cross_attention`).
+- With CFG, every unconditional lane starts from the same baked-context rows (no
+  text, zero context embedding). The arenas hold one extra lane with those rows,
+  and steps of at least `shared_uncond_prefix_min_rows` requests attend them once
+  for all unconditional lanes (cascade attention via
+  `ggml_fused_attn_cached_prefix`); each lane then attends only its own newer
+  rows (`shared_uncond_prefix`). Lanes keep their own copy of the prefix, so the
+  Q8_0 fused kernels and smaller steps are unaffected.
+
 ## Architecture
 
 All files are in `src/tts/magpietts/batch/` unless noted.

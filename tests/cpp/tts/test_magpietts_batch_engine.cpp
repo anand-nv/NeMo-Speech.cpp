@@ -9,7 +9,7 @@
 // Usage: test_magpietts_batch_engine --magpie M.gguf --codec C.gguf --tokenizer DIR
 //            --texts FILE [--n N] [--slots S] [--out DIR] [--seed X] [--cpu] [--no-cfg]
 //            [--check] [--max-steps N] [--stress N] [--prefill-batch N] [--prefill-wait-ms MS]
-//            [--prefill-stream] [--codec-batching]
+//            [--prefill-stream] [--codec-batching] [--no-shared-prefix]
 // --stress N submits N requests at random times and cancels about one in six at random moments;
 // every request must report exactly once, every uncancelled one must succeed and the engine must
 // end empty.
@@ -92,7 +92,7 @@ main(int argc, char** argv) {
     int prefills_per_iter = -1, decode_steps_before_prefill = -1, prefill_batch = 0,
         prefill_wait = -1;
     bool force_cpu = false, use_cfg = true, check = false, same_seed = false,
-         prefill_stream = false, codec_batching = false;
+         prefill_stream = false, codec_batching = false, shared_prefix = true;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         auto next = [&]() -> std::string { return i + 1 < argc ? argv[++i] : std::string(); };
@@ -124,6 +124,8 @@ main(int argc, char** argv) {
             prefill_stream = true;
         else if (a == "--codec-batching")
             codec_batching = true;
+        else if (a == "--no-shared-prefix")
+            shared_prefix = false;
         else if (a == "--prefill-wait-ms")
             prefill_wait = std::atoi(next().c_str());
         else if (a == "--decode-steps-before-prefill")
@@ -184,6 +186,7 @@ main(int argc, char** argv) {
         config.prefill_wait_ms = prefill_wait;
     config.prefill_stream = prefill_stream;
     config.codec_batching = codec_batching;
+    config.shared_uncond_prefix = shared_prefix;
     if (decode_steps_before_prefill >= 0)
         config.max_decode_steps_before_prefill = decode_steps_before_prefill;
     tts::MagpieBatchEngine engine(magpie, codec, config);

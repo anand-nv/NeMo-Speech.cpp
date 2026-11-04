@@ -6,13 +6,16 @@
 // reports the cost of a step at each batch size.
 //
 // Usage: test_magpietts_batch_fused <magpie.q8_0.gguf> [--rows 1,2,4,8,16] [--steps K] [--no-cfg]
-//            [--timing-only]
+//            [--timing-only] [--prefill-batch] [--no-shared-prefix]
 // --timing-only reports the step cost of each row count on whichever path the backend runs (the
-// ggml graphs for an F16 model, too) without the batch-invariance check.
+// ggml graphs for an F16 model, too) without the batch-invariance check, and a checksum of the
+// codes generated. --prefill-batch prefills each row set in one batched prefill (whose slots
+// share the unconditional prefix lane unless --no-shared-prefix).
 // The model may also come from NEMO_SPEECH_TEST_TTS_MODEL (a Q8_0 model is needed for the fused
 // kernels); the test is skipped without a model, a GPU or fused-kernel support.
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <random>
@@ -82,6 +85,8 @@ main(int argc, char** argv) {
     int steps = 24;
     bool use_cfg = true;
     bool timing_only = false;
+    bool prefill_batch = false;
+    bool shared_prefix = true;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         if (a == "--rows" && i + 1 < argc) {
@@ -95,6 +100,10 @@ main(int argc, char** argv) {
             use_cfg = false;
         } else if (a == "--timing-only") {
             timing_only = true;
+        } else if (a == "--prefill-batch") {
+            prefill_batch = true;
+        } else if (a == "--no-shared-prefix") {
+            shared_prefix = false;
         } else {
             model_path = a;
         }
@@ -121,6 +130,9 @@ main(int argc, char** argv) {
     tts::MagpieBatchConfig config;
     config.max_slots = max_rows;
     config.use_cfg = use_cfg;
+    config.shared_uncond_prefix = shared_prefix;
+    if (prefill_batch)
+        config.prefill_batch_size = max_rows;
     tts::MagpieBatchModelBackend backend(model, config);
     std::string error;
     if (!backend.init(&error)) {
@@ -152,17 +164,37 @@ main(int argc, char** argv) {
     auto run = [&](const std::vector<int>& ids, double* ms_per_step) -> bool {
         const int B = static_cast<int>(ids.size());
         std::vector<std::vector<int32_t>> prev(static_cast<size_t>(B));
+        std::vector<std::vector<float>> first_priors(static_cast<size_t>(B));
+        std::vector<tts::MagpieBatchRowInput> first_rows(static_cast<size_t>(B));
+        std::vector<tts::MagpieBatchRowOutput> first_outs(static_cast<size_t>(B));
         for (int b = 0; b < B; ++b) {
             Request& r = reqs[static_cast<size_t>(ids[b])];
             r.codes.clear();
             r.argmax.clear();
             r.align.clear();
             r.rng.seed(static_cast<uint32_t>(r.seed));
-            std::vector<float> prior = prior_for(0, static_cast<int>(r.tokens.size()));
-            tts::MagpieBatchRowInput row = make_row(h, r, 0, nullptr, &prior);
-            tts::MagpieBatchRowOutput out;
-            if (!backend.prefill(b, row, out))
+            first_priors[static_cast<size_t>(b)] =
+                prior_for(0, static_cast<int>(r.tokens.size()));
+            first_rows[static_cast<size_t>(b)] =
+                make_row(h, r, 0, nullptr, &first_priors[static_cast<size_t>(b)]);
+            if (!prefill_batch &&
+                !backend.prefill(
+                    b, first_rows[static_cast<size_t>(b)], first_outs[static_cast<size_t>(b)]))
                 return false;
+        }
+        if (prefill_batch) {
+            std::vector<int> slots;
+            std::vector<const tts::MagpieBatchRowInput*> ptrs;
+            for (int b = 0; b < B; ++b) {
+                slots.push_back(b);
+                ptrs.push_back(&first_rows[static_cast<size_t>(b)]);
+            }
+            if (!backend.prefillBatch(slots, ptrs, first_outs))
+                return false;
+        }
+        for (int b = 0; b < B; ++b) {
+            Request& r = reqs[static_cast<size_t>(ids[b])];
+            const tts::MagpieBatchRowOutput& out = first_outs[static_cast<size_t>(b)];
             r.codes.push_back(out.codes);
             r.argmax.push_back(out.argmax);
             r.align.push_back(out.alignment);
@@ -212,8 +244,14 @@ main(int argc, char** argv) {
                 std::fprintf(stderr, "FAIL: run rows=%d\n", B);
                 return 1;
             }
+            uint64_t checksum = 1469598103934665603ull;  // FNV-1a over the codes of every step
+            for (int id : ids)
+                for (const auto& frame : reqs[static_cast<size_t>(id)].codes)
+                    for (int32_t c : frame)
+                        checksum = (checksum ^ static_cast<uint32_t>(c)) * 1099511628211ull;
             std::printf(
-                "rows=%d: %.3f ms/step (%s)\n", B, ms, backend.fused() ? "fused" : "graphs");
+                "rows=%d: %.3f ms/step (%s), codes checksum %016llx\n", B, ms,
+                backend.fused() ? "fused" : "graphs", static_cast<unsigned long long>(checksum));
         }
         return 0;
     }

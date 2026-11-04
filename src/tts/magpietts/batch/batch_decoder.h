@@ -71,7 +71,16 @@ class MagpieBatchDecoder {
     int slotValid(int slot) const;
     // A batched prefill wrote the slot's caches in place (see MagpieDecoder::prefillBatch): make
     // the slot's next step position n_tokens with text_len cross rows, as seedSlot + setSlotCross.
-    bool markPrefilled(int slot, int n_tokens, int text_len);
+    // shared_uncond_prefix: the slot's unconditional lane holds the setSharedUncondPrefix rows.
+    bool markPrefilled(int slot, int n_tokens, int text_len, bool shared_uncond_prefix = false);
+    // Lanes of the self-attention arenas: the layout's lanes plus the shared prefix lane.
+    int arenaLaneCount() const { return layout_.arenaLanes() + 1; }
+    int prefixLane() const { return layout_.arenaLanes(); }
+    // Copy the unconditional baked-context prefill (identical for every request: see
+    // magpietts_uncond_prefill_cache) into the shared prefix lane. Slots marked prefilled with
+    // shared_uncond_prefix then read those rows from there in CUDA step graphs.
+    bool setSharedUncondPrefix(const magpietts_uncond_prefill_cache& cache);
+    bool sharedUncondPrefix() const { return shared_prefix_tokens_ > 0; }
     // The arenas as ggml tensors (batched prefill graphs write into them).
     ggml_tensor* selfArenaTensor(int layer) const;
     ggml_tensor* crossKTensor() const;
@@ -98,6 +107,7 @@ class MagpieBatchDecoder {
         int ring_head = 0;
         int valid = 0;
         int text_len = 0;
+        int uncond_prefix = 0;  // leading rows of the uncond lane equal to the shared prefix
     };
 
     const magpietts_model& model_;
@@ -107,12 +117,13 @@ class MagpieBatchDecoder {
     int cache_len_ = 0;
     int text_capacity_ = 0;
     int max_positions_ = 0;
+    int shared_prefix_tokens_ = 0;
     std::vector<SlotState> slots_;
     std::unique_ptr<ggml_runtime::BackendManager> backend_manager_;
     std::unique_ptr<Module> module_;
     std::unique_ptr<ggml_runtime::Session> session_;
     // host staging of the step inputs
-    std::vector<int32_t> tokens_, positions_, lane_slots_, cache_meta_, cross_slots_;
+    std::vector<int32_t> tokens_, positions_, lane_slots_, cache_meta_, cross_slots_, text_lens_;
     std::vector<float> prior_, mask_, alignment_;
 };
 

@@ -34,15 +34,21 @@ constexpr const char* kCrossV = "magpietts.batch.cross_v";
 }  // namespace
 
 // Step graph of one bucket. Inputs (bucket B, lanes L = B or 2B):
-//   tokens [B, n_cb] i32, positions [B] i32, lane_slots [L] i32, cache_meta [L, 2] i32
-//   (ring heads, then valid lengths), cross_slots [B] i32, prior [TC, B] f32, mask [TC, B] f32.
+//   tokens [B, n_cb] i32, positions [B] i32, lane_slots [L] i32, cache_meta [L, 3] i32
+//   (ring heads, valid lengths, then rows readable from the shared prefix lane), cross_slots [B] i32, prior [TC, B] f32, mask [TC, B] f32,
+//   text_lens [B] i32.
 // Outputs: hidden [E, L] f32, alignment [TC, B] f32 (when the model collects one).
 class MagpieBatchDecoder::Module final : public ggml_runtime::Module {
    public:
     Module(
         const magpietts_model& model, const MagpieLaneLayout& layout, int cache_len,
-        int text_capacity)
-        : model_(model), layout_(layout), cache_len_(cache_len), text_capacity_(text_capacity) {
+        int text_capacity, bool fused_cross, int shared_prefix_min_rows)
+        : model_(model),
+          layout_(layout),
+          cache_len_(cache_len),
+          text_capacity_(text_capacity),
+          fused_cross_(fused_cross),
+          shared_prefix_min_rows_(shared_prefix_min_rows) {
         const magpietts_transformer& tr = model_.decoder;
         for (int il = 0; il < static_cast<int>(tr.layers.size()); ++il) {
             if (tr.layers[il].has_cross && layer_selected(tr.estimate_alignment_from_layers, il)) {
@@ -83,7 +89,7 @@ class MagpieBatchDecoder::Module final : public ggml_runtime::Module {
         for (int layer = 0; layer < h.n_dec_layer; ++layer) {
             tc->create_tensor_3d(
                 self_arena_name(layer), GGML_TYPE_F32, static_cast<int64_t>(h.n_embd) * cache_len_,
-                layout_.arenaLanes(), 2);
+                layout_.arenaLanes() + 1, 2);  // + the shared prefix lane
         }
         const int64_t cross_dim = static_cast<int64_t>(tr.n_cross_head) * tr.n_cross_dhead;
         // [cross_dim * text_capacity, layers, slots]: a slot's rows of every layer are one block.
@@ -96,8 +102,8 @@ class MagpieBatchDecoder::Module final : public ggml_runtime::Module {
     ggml_runtime::TensorBag build_graph(
         ggml_runtime::Session* session, ggml_runtime::TensorBag inputs,
         ggml_runtime::TensorContainer* tc) override {
-        if (inputs.tensor_count() != 7) {
-            throw std::runtime_error("Magpie batched decoder expects seven inputs");
+        if (inputs.tensor_count() != 8) {
+            throw std::runtime_error("Magpie batched decoder expects eight inputs");
         }
         const auto tokens = inputs.get_tensor(0);
         const auto positions = inputs.get_tensor(1);
@@ -106,6 +112,7 @@ class MagpieBatchDecoder::Module final : public ggml_runtime::Module {
         const auto cross_slots = inputs.get_tensor(4);
         const auto prior = inputs.get_tensor(5);
         const auto mask = inputs.get_tensor(6);
+        const auto text_lens = inputs.get_tensor(7);
         const auto bf_ctx = tc->get_ctx_of_buffer_type(tokens.buft);
         ggml_context* ctx = bf_ctx.ctx;
         const magpietts_hparams& h = model_.hparams;
@@ -118,6 +125,7 @@ class MagpieBatchDecoder::Module final : public ggml_runtime::Module {
         const int64_t c_heads = tr.n_cross_head;
         const int64_t cross_dim = cd_head * c_heads;
         const int64_t TC = text_capacity_;
+        const bool shared_prefix = shared_prefix_min_rows_ > 0 && B >= shared_prefix_min_rows_;
 
         // Input embedding: mean of the stacked codebook embeddings plus the position.
         ggml_tensor* audio = nullptr;
@@ -153,9 +161,17 @@ class MagpieBatchDecoder::Module final : public ggml_runtime::Module {
             ggml_tensor* v = split_heads(static_cast<size_t>(2 * E) * element);
             auto arena = session->model_tensor_container->get_tensor_by_name(self_arena_name(il));
 #if defined(NEMO_SPEECH_GGML_PATCHED)
-            ggml_tensor* heads = ggml_fused_attn_cached(
-                ctx, q, k, v, nullptr, arena.tensor, lane_slots.tensor, cache_meta.tensor,
-                cache_len_, 1.0f / std::sqrt(static_cast<float>(d_head)), true);
+            const float attn_scale = 1.0f / std::sqrt(static_cast<float>(d_head));
+            ggml_tensor* heads =
+                shared_prefix
+                    ? ggml_fused_attn_cached_prefix(
+                          ctx, q, k, v, nullptr, arena.tensor, lane_slots.tensor,
+                          cache_meta.tensor, cache_len_, attn_scale, true, layout_.arenaLanes())
+                    : ggml_fused_attn_cached(
+                          ctx, q, k, v, nullptr, arena.tensor, lane_slots.tensor,
+                          ggml_view_2d(
+                              ctx, cache_meta.tensor, L, 2, cache_meta.tensor->nb[1], 0),
+                          cache_len_, attn_scale, true);
 #else
             (void)q;
             (void)k;
@@ -176,42 +192,63 @@ class MagpieBatchDecoder::Module final : public ggml_runtime::Module {
                         : nullptr;
                 ggml_tensor* query =
                     linear(ctx, layer.cross_q, layer_norm(ctx, cond, layer.norm_xattn_query));
-                ggml_tensor* qh = ggml_permute(
-                    ctx, ggml_reshape_4d(ctx, query, cd_head, c_heads, 1, B), 0, 2, 1, 3);
-                auto gather = [&](ggml_tensor* arena_plane) {
-                    ggml_tensor* layer_rows = ggml_view_2d(
-                        ctx, arena_plane, cross_dim * TC, layout_.arena_slots, arena_plane->nb[2],
-                        static_cast<size_t>(il) * arena_plane->nb[1]);
-                    return ggml_get_rows(ctx, layer_rows, cross_slots.tensor);  // [CD*TC, B]
-                };
-                ggml_tensor* kh = ggml_permute(
-                    ctx, ggml_reshape_4d(ctx, gather(cross_k), cd_head, c_heads, TC, B), 0, 2, 1,
-                    3);                                           // [d, TC, H, B]
-                ggml_tensor* scores = ggml_mul_mat(ctx, kh, qh);  // [TC, 1, H, B]
                 const bool apply_prior =
                     tr.apply_attention_prior && layer_selected(tr.apply_prior_to_layers, il);
-                ggml_tensor* probs = ggml_soft_max_ext(
-                    ctx, scores, apply_prior ? prior_bias : mask_bias,
-                    1.0f / std::sqrt(static_cast<float>(cd_head)), 0.0f);
-                if (layer_selected(tr.estimate_alignment_from_layers, il)) {
-                    ggml_tensor* per_layer =
-                        c_heads == 1
-                            ? ggml_reshape_2d(ctx, probs, TC, B)
-                            : ggml_reshape_2d(
-                                  ctx,
-                                  ggml_sum_rows(
-                                      ctx, ggml_cont(ctx, ggml_permute(ctx, probs, 1, 2, 0, 3))),
-                                  TC, B);
-                    alignment_sum =
-                        alignment_sum ? ggml_add(ctx, alignment_sum, per_layer) : per_layer;
+                const bool estimate = layer_selected(tr.estimate_alignment_from_layers, il);
+                ggml_tensor* attended = nullptr;
+#if defined(NEMO_SPEECH_GGML_PATCHED)
+                if (fused_cross_) {
+                    ggml_tensor* fused = ggml_slot_cross_attn(
+                        ctx, query, cross_k, cross_v, cross_slots.tensor,
+                        apply_prior ? prior.tensor : mask.tensor, text_lens.tensor,
+                        static_cast<int>(c_heads), il,
+                        1.0f / std::sqrt(static_cast<float>(cd_head)), estimate);
+                    attended =
+                        ggml_view_2d(ctx, fused, cross_dim, B, cross_dim * sizeof(float), 0);
+                    if (estimate) {
+                        ggml_tensor* per_layer = ggml_view_2d(
+                            ctx, fused, TC, B, TC * sizeof(float), cross_dim * B * sizeof(float));
+                        alignment_sum =
+                            alignment_sum ? ggml_add(ctx, alignment_sum, per_layer) : per_layer;
+                    }
                 }
-                ggml_tensor* vt = ggml_cont(
-                    ctx, ggml_permute(
-                             ctx, ggml_reshape_4d(ctx, gather(cross_v), cd_head, c_heads, TC, B), 1,
-                             2, 0, 3));                                 // [TC, d, H, B]
-                ggml_tensor* ctx_heads = ggml_mul_mat(ctx, vt, probs);  // [d, 1, H, B]
-                ggml_tensor* attended =
-                    ggml_cont_2d(ctx, ggml_permute(ctx, ctx_heads, 0, 2, 1, 3), cross_dim, B);
+#endif
+                if (!attended) {
+                    ggml_tensor* qh = ggml_permute(
+                        ctx, ggml_reshape_4d(ctx, query, cd_head, c_heads, 1, B), 0, 2, 1, 3);
+                    auto gather = [&](ggml_tensor* arena_plane) {
+                        ggml_tensor* layer_rows = ggml_view_2d(
+                            ctx, arena_plane, cross_dim * TC, layout_.arena_slots, arena_plane->nb[2],
+                            static_cast<size_t>(il) * arena_plane->nb[1]);
+                        return ggml_get_rows(ctx, layer_rows, cross_slots.tensor);  // [CD*TC, B]
+                    };
+                    ggml_tensor* kh = ggml_permute(
+                        ctx, ggml_reshape_4d(ctx, gather(cross_k), cd_head, c_heads, TC, B), 0, 2, 1,
+                        3);                                           // [d, TC, H, B]
+                    ggml_tensor* scores = ggml_mul_mat(ctx, kh, qh);  // [TC, 1, H, B]
+                    ggml_tensor* probs = ggml_soft_max_ext(
+                        ctx, scores, apply_prior ? prior_bias : mask_bias,
+                        1.0f / std::sqrt(static_cast<float>(cd_head)), 0.0f);
+                    if (estimate) {
+                        ggml_tensor* per_layer =
+                            c_heads == 1
+                                ? ggml_reshape_2d(ctx, probs, TC, B)
+                                : ggml_reshape_2d(
+                                      ctx,
+                                      ggml_sum_rows(
+                                          ctx, ggml_cont(ctx, ggml_permute(ctx, probs, 1, 2, 0, 3))),
+                                      TC, B);
+                        alignment_sum =
+                            alignment_sum ? ggml_add(ctx, alignment_sum, per_layer) : per_layer;
+                    }
+                    ggml_tensor* vt = ggml_cont(
+                        ctx, ggml_permute(
+                                 ctx, ggml_reshape_4d(ctx, gather(cross_v), cd_head, c_heads, TC, B), 1,
+                                 2, 0, 3));                                 // [TC, d, H, B]
+                    ggml_tensor* ctx_heads = ggml_mul_mat(ctx, vt, probs);  // [d, 1, H, B]
+                    attended =
+                        ggml_cont_2d(ctx, ggml_permute(ctx, ctx_heads, 0, 2, 1, 3), cross_dim, B);
+                }
                 cond = ggml_add(ctx, cond, linear(ctx, layer.cross_o, attended));
                 x = uncond ? ggml_concat(ctx, cond, uncond, 1) : cond;
             }
@@ -257,6 +294,8 @@ class MagpieBatchDecoder::Module final : public ggml_runtime::Module {
     MagpieLaneLayout layout_;
     int cache_len_ = 0;
     int text_capacity_ = 0;
+    bool fused_cross_ = false;
+    int shared_prefix_min_rows_ = 0;  // 0: never
     int alignment_layers_ = 0;
 };
 
@@ -336,7 +375,11 @@ MagpieBatchDecoder::init(std::string* error) {
         backend_manager_ =
             gpu ? std::make_unique<ggml_runtime::BackendManager>(params, model_.backend)
                 : std::make_unique<ggml_runtime::BackendManager>(params);
-        module_ = std::make_unique<Module>(model_, layout_, cache_len_, text_capacity_);
+        module_ = std::make_unique<Module>(
+            model_, layout_, cache_len_, text_capacity_, gpu && config_.fused_cross_attention,
+            gpu && layout_.use_cfg && config_.shared_uncond_prefix
+                ? std::max(1, config_.shared_uncond_prefix_min_rows)
+                : 0);
         session_ =
             std::make_unique<ggml_runtime::Session>(*backend_manager_, module_.get(), nullptr);
         session_->set_run_cache_capacity(buckets_.size() + 1);
@@ -357,7 +400,8 @@ MagpieBatchDecoder::init(std::string* error) {
 }
 
 bool
-MagpieBatchDecoder::markPrefilled(int slot, int n_tokens, int text_len) {
+MagpieBatchDecoder::markPrefilled(
+    int slot, int n_tokens, int text_len, bool shared_uncond_prefix) {
     if (!session_ || slot < 0 || slot >= dummySlot() || n_tokens <= 0 || n_tokens > cache_len_ ||
         text_len <= 0 || text_len > text_capacity_) {
         return false;
@@ -367,6 +411,42 @@ MagpieBatchDecoder::markPrefilled(int slot, int n_tokens, int text_len) {
     s.valid = n_tokens;
     s.ring_head = 0;
     s.text_len = text_len;
+    s.uncond_prefix =
+        shared_uncond_prefix && n_tokens == shared_prefix_tokens_ ? shared_prefix_tokens_ : 0;
+    return true;
+}
+
+bool
+MagpieBatchDecoder::setSharedUncondPrefix(const magpietts_uncond_prefill_cache& cache) {
+    const int n = cache.n_tokens;
+    if (!session_ || !layout_.use_cfg || !cache.k || !cache.v || n <= 0 || n > cache_len_ ||
+        cache.n_embd != model_.hparams.n_embd || cache.n_layers != model_.hparams.n_dec_layer) {
+        return false;
+    }
+    ggml_init_params params = {
+        ggml_tensor_overhead() * static_cast<size_t>(4 * cache.n_layers + 8), nullptr, true};
+    ggml_context* ctx = ggml_init(params);
+    const size_t f = sizeof(float);
+    const size_t rows = static_cast<size_t>(n) * cache.n_embd;
+    const size_t dst_row0 = static_cast<size_t>(cache_len_ - n) * cache.n_embd * f;
+    for (int layer = 0; layer < cache.n_layers; ++layer) {
+        ggml_tensor* arena =
+            session_->model_tensor_container->get_tensor_by_name(self_arena_name(layer)).tensor;
+        for (int plane = 0; plane < 2; ++plane) {
+            ggml_tensor* src = ggml_view_1d(
+                ctx, plane == 0 ? cache.k : cache.v, static_cast<int64_t>(rows),
+                static_cast<size_t>(layer) * rows * f);
+            ggml_tensor* dst = ggml_view_1d(
+                ctx, arena, static_cast<int64_t>(rows),
+                plane * arena->nb[2] + static_cast<size_t>(prefixLane()) * arena->nb[1] +
+                    dst_row0);
+            ggml_backend_view_init(src);
+            ggml_backend_view_init(dst);
+            ggml_backend_tensor_copy(src, dst);
+        }
+    }
+    ggml_free(ctx);
+    shared_prefix_tokens_ = n;
     return true;
 }
 
@@ -453,6 +533,7 @@ MagpieBatchDecoder::seedSlot(int slot, const DecoderKvCache& cond, const Decoder
     s.n_tokens = n;
     s.valid = n;
     s.ring_head = 0;
+    s.uncond_prefix = 0;
     return true;
 }
 
@@ -542,8 +623,9 @@ MagpieBatchDecoder::step(
     tokens_.assign(static_cast<size_t>(n_cb) * bucket, 0);
     positions_.assign(static_cast<size_t>(bucket), 0);
     cross_slots_.assign(static_cast<size_t>(bucket), dummySlot());
+    text_lens_.assign(static_cast<size_t>(bucket), 1);
     lane_slots_.assign(static_cast<size_t>(L), 0);
-    cache_meta_.assign(static_cast<size_t>(L) * 2, 0);
+    cache_meta_.assign(static_cast<size_t>(L) * 3, 0);
     mask_.assign(static_cast<size_t>(TC) * bucket, kPadBias);
     prior_.assign(static_cast<size_t>(TC) * bucket, kPadBias);
     bool any_alignment = false;
@@ -571,6 +653,7 @@ MagpieBatchDecoder::step(
         const int text_len = real ? rows[static_cast<size_t>(b)].text_len : 1;
         positions_[static_cast<size_t>(b)] = real ? s.n_tokens : 0;
         cross_slots_[static_cast<size_t>(b)] = slot;
+        text_lens_[static_cast<size_t>(b)] = text_len;
         const int lane_count = layout_.lanesPerSlot();
         for (int lane = 0; lane < lane_count; ++lane) {
             const int col = lane * bucket + b;
@@ -578,6 +661,13 @@ MagpieBatchDecoder::step(
                 lane == 0 ? layout_.condLane(slot) : layout_.uncondLane(slot);
             cache_meta_[static_cast<size_t>(col)] = s.ring_head;
             cache_meta_[static_cast<size_t>(L + col)] = s.valid;
+            if (lane == 1 && real && s.uncond_prefix > 0) {
+                // the prefix sits at physical rows [cache_len - P, cache_len) and the appended
+                // rows at [0, appended): only the rows not yet overwritten are shared
+                const int appended = s.n_tokens - s.uncond_prefix;
+                cache_meta_[static_cast<size_t>(2 * L + col)] =
+                    std::max(0, std::min(s.uncond_prefix, cache_len_ - appended));
+            }
         }
         float* mask_row = mask_.data() + static_cast<size_t>(b) * TC;
         float* prior_row = prior_.data() + static_cast<size_t>(b) * TC;
@@ -595,10 +685,11 @@ MagpieBatchDecoder::step(
         {"magpietts.batch.tokens", GGML_TYPE_I32, tokens_.data(), {bucket, n_cb}},
         {"magpietts.batch.positions", GGML_TYPE_I32, positions_.data(), {bucket}},
         {"magpietts.batch.lane_slots", GGML_TYPE_I32, lane_slots_.data(), {L}},
-        {"magpietts.batch.cache_meta", GGML_TYPE_I32, cache_meta_.data(), {L, 2}},
+        {"magpietts.batch.cache_meta", GGML_TYPE_I32, cache_meta_.data(), {L, 3}},
         {"magpietts.batch.cross_slots", GGML_TYPE_I32, cross_slots_.data(), {bucket}},
         {"magpietts.batch.prior", GGML_TYPE_F32, prior_.data(), {TC, bucket}},
         {"magpietts.batch.mask", GGML_TYPE_F32, mask_.data(), {TC, bucket}},
+        {"magpietts.batch.text_lens", GGML_TYPE_I32, text_lens_.data(), {bucket}},
     };
     const bool has_alignment = module_->alignmentLayers() > 0;
     std::vector<ggml_runtime::Session::Output> outputs(has_alignment && any_alignment ? 2 : 1);

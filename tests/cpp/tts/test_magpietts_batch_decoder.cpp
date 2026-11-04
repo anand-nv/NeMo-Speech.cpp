@@ -6,7 +6,11 @@
 // frames as their serial run, and each row's hidden states and cross-attention alignment must
 // match the serial decoder's.
 //
-// Usage: test_magpietts_batch_decoder <magpie.gguf> [--cpu] [--steps N] [--tol X]
+// Usage: test_magpietts_batch_decoder <magpie.gguf> [--cpu] [--steps N] [--tol X] [--unfused-cross]
+//            [--shared-prefix]
+// --unfused-cross runs the CUDA step graphs' text cross-attention as separate ggml ops instead of
+// the fused slot kernel. --shared-prefix marks every seeded slot as holding the shared
+// unconditional prefix, so CUDA steps attend it through the shared lane (cascade attention).
 // The model may also come from NEMO_SPEECH_TEST_TTS_MODEL; without one the test is skipped.
 #include <algorithm>
 #include <cmath>
@@ -90,12 +94,18 @@ int
 main(int argc, char** argv) {
     std::string model_path;
     bool force_cpu = false;
+    bool fused_cross = true;
+    bool shared_prefix = false;
     int steps = 12;
     float tol = 1.0e-2f;  // CUDA F16 batched GEMMs round activations to F16
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         if (a == "--cpu")
             force_cpu = true;
+        else if (a == "--unfused-cross")
+            fused_cross = false;
+        else if (a == "--shared-prefix")
+            shared_prefix = true;
         else if (a == "--steps" && i + 1 < argc)
             steps = std::atoi(argv[++i]);
         else if (a == "--tol" && i + 1 < argc)
@@ -198,6 +208,8 @@ main(int argc, char** argv) {
     config.use_cfg = true;
     config.buckets = {1, 2, 4, 8};
     config.threads = threads;
+    config.fused_cross_attention = fused_cross;
+    config.shared_uncond_prefix_min_rows = 1;  // the cascade path in every bucket
     tts::MagpieBatchDecoder batch(model, config);
     std::string error;
     if (!batch.init(&error)) {
@@ -235,6 +247,17 @@ main(int argc, char** argv) {
                     !batch.setSlotCross(slot_of[i], cross, text_len)) {
                     std::fprintf(stderr, "FAIL: prefill/seed prompt %zu\n", i);
                     return 1;
+                }
+                if (shared_prefix) {
+                    // the serial prefill's unconditional lane is the decoder's shared cache
+                    const tts::magpietts_uncond_prefill_cache* uc =
+                        prefill_decoder.uncondPrefillCache();
+                    if (!uc || (!batch.sharedUncondPrefix() && !batch.setSharedUncondPrefix(*uc)) ||
+                        !batch.markPrefilled(
+                            slot_of[i], batch.slotTokens(slot_of[i]), text_len, true)) {
+                        std::fprintf(stderr, "FAIL: shared prefix for prompt %zu\n", i);
+                        return 1;
+                    }
                 }
                 const float ec = max_abs_diff(
                     read_hidden(hc).data(), p.ref_cond[0].data(), static_cast<size_t>(E));

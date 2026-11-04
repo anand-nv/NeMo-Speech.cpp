@@ -4,6 +4,7 @@
 
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -116,7 +117,11 @@ class NanoCodecDecoder {
    public:
     explicit NanoCodecDecoder(const NanoCodecModel& model);
 
-    bool decode(const NanoCodecFrames& frames, int threads, std::vector<float>& audio) const;
+    // `backend` (optional, from NanoCodecModel::createComputeBackend) computes the decode instead
+    // of the model's default backend; callers sharing a backend must serialize.
+    bool decode(
+        const NanoCodecFrames& frames, int threads, std::vector<float>& audio,
+        ggml_backend_t backend = nullptr) const;
     bool initStreamGraph(
         NanoCodecStreamState& state, int chunk_frames, NanoCodecStreamGraph& graph) const;
     // `backend` (optional, from NanoCodecModel::createComputeBackend) computes the chunk instead
@@ -155,7 +160,18 @@ class NanoCodecBatchDecoder {
     // batch holding it is done. Calls for one slot must not overlap.
     bool decode(int slot, const NanoCodecFrames& frames, std::vector<float>& audio);
 
+    // Asynchronous submission (a server's batching scheduler): `done` receives the audio of the
+    // first keep_frames frames (the rest is padding, e.g. silence that fills a final chunk) on
+    // the decoder's thread. A stream's chunks decode in the order they are staged or submitted.
+    // stage() holds chunks until commit(), so the chunks one decoder step completes go into the
+    // same batch; submit() queues at once.
+    using Done = std::function<void(bool ok, std::vector<float>&& audio)>;
+    void stage(int slot, NanoCodecFrames frames, int keep_frames, Done done);
+    void commit();
+    void submit(int slot, NanoCodecFrames frames, int keep_frames, Done done);
+
    private:
+    bool valid(int slot, size_t frames) const;
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };

@@ -267,7 +267,7 @@ MagpieBatchModelBackend::initFused(std::string* reason) {
     for (size_t i = 0; i < tr.layers.size(); ++i) arena[i] = decoder_.selfArena((int)i);
     magpietts_batch_decoder_fused_cache cache{};
     cache.cache_len = decoder_.cacheLen();
-    cache.arena_lanes = decoder_.layout().arenaLanes();
+    cache.arena_lanes = decoder_.arenaLaneCount();
     cache.kv_arena = arena.data();
     cache.text_capacity = decoder_.textCapacity();
     cache.arena_slots = decoder_.layout().arena_slots;
@@ -569,6 +569,16 @@ MagpieBatchModelBackend::preparePrefillRows(
 }
 
 bool
+MagpieBatchModelBackend::sharedUncondPrefix() {
+    if (!decoder_.sharedUncondPrefix()) {
+        if (const magpietts_uncond_prefill_cache* uc = prefill_decoder_.uncondPrefillCache()) {
+            decoder_.setSharedUncondPrefix(*uc);
+        }
+    }
+    return decoder_.sharedUncondPrefix();
+}
+
+bool
 MagpieBatchModelBackend::ensurePrefillHidden() {
     return prefill_batch_hidden_.tensor || prefill_batch_hidden_.alloc2d(
                                                model_, GGML_TYPE_F32, model_.hparams.n_embd,
@@ -617,8 +627,10 @@ MagpieBatchModelBackend::prefillBatch(
     if (n_tokens <= 0) {
         return one_at_a_time(first);
     }
+    const bool shared = sharedUncondPrefix();
     for (size_t i = 0; i < n; ++i) {
-        if (!decoder_.markPrefilled(slots[first + i], n_tokens, rows[first + i]->text_len)) {
+        if (!decoder_.markPrefilled(
+                slots[first + i], n_tokens, rows[first + i]->text_len, shared)) {
             return false;
         }
     }
@@ -746,8 +758,9 @@ MagpieBatchModelBackend::prefillCompute(MagpieBatchPrefillJob& job) {
 bool
 MagpieBatchModelBackend::prefillEnd(MagpieBatchPrefillJob& job) {
     const size_t n = job.rows.size();
+    const bool shared = sharedUncondPrefix();
     for (size_t i = 0; i < n; ++i) {
-        if (!decoder_.markPrefilled(job.slots[i], job.n_tokens, job.rows[i]->text_len)) {
+        if (!decoder_.markPrefilled(job.slots[i], job.n_tokens, job.rows[i]->text_len, shared)) {
             return false;
         }
     }

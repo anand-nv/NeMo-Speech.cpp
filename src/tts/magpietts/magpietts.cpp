@@ -6,6 +6,7 @@
 #include <array>
 #include <atomic>
 #include <condition_variable>
+#include <deque>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -696,8 +697,7 @@ decode_and_stream_chunk(
     const std::vector<std::vector<int32_t>>& chunk, int threads, stream_audio_outputs& outputs,
     AudioPostProcessor& audio_pp, stream_run_metrics* metrics, const char* run_label,
     int chunk_index, int history_frames, bool final_chunk, bool verbose,
-    std::mutex* decode_mutex = nullptr, ggml_backend_t decode_backend = nullptr,
-    nc::NanoCodecBatchDecoder* batch_codec = nullptr, int batch_slot = -1) {
+    std::mutex* decode_mutex = nullptr, ggml_backend_t decode_backend = nullptr) {
     const ggml_nvtx::range nvtx_range("magpietts_stream_decode_and_write_chunk");
     if (chunk.empty()) {
         return true;
@@ -716,15 +716,10 @@ decode_and_stream_chunk(
     bool decoded = false;
     // Requests of the batching engine share the codec backend: one decode at a time.
     std::unique_lock<std::mutex> decode_lock;
-    if (batch_codec && stream_state) {
-        // decoded together with the chunks other requests submit meanwhile (same stream state)
-        decoded = batch_codec->decode(batch_slot, codec_frames, audio);
-    } else if (decode_mutex) {
+    if (decode_mutex) {
         decode_lock = std::unique_lock<std::mutex>(*decode_mutex);
     }
-    if (batch_codec && stream_state) {
-        // done above
-    } else if (stream_state) {
+    if (stream_state) {
         if (!stream_graph) {
             fprintf(stderr, "stateful codec stream requested without a persistent graph\n");
             return false;
@@ -738,7 +733,7 @@ decode_and_stream_chunk(
         decoded = decoder.decodeStream(
             *stream_state, *stream_graph, codec_frames, threads, audio, decode_backend);
     } else {
-        decoded = decoder.decode(codec_frames, threads, audio);
+        decoded = decoder.decode(codec_frames, threads, audio, decode_backend);
     }
     if (decode_lock.owns_lock()) {
         decode_lock.unlock();
@@ -822,10 +817,19 @@ struct codec_stream_worker {
     // sharing it.
     std::mutex* decode_mutex = nullptr;
     ggml_backend_t decode_backend = nullptr;
-    // Batching engine with a batched codec: this request's stream slot in it (instead of the
-    // above).
-    nc::NanoCodecBatchDecoder* batch_codec = nullptr;
-    int batch_slot = -1;
+    // Lockstep batched codec (batching engine): the scheduler takes this request's chunks after
+    // every step (take_chunk) and the engine's batched codec decodes them together with the other
+    // requests'; this worker only post-processes and outputs the decoded audio (deliver).
+    bool lockstep = false;
+    struct decoded_chunk {
+        codec_read_result item;
+        bool ok = false;
+        std::vector<float> audio;
+        int64_t submitted_us = 0;
+    };
+    std::deque<decoded_chunk> decoded;
+    int inflight = 0;  // chunks taken and not yet delivered
+    std::condition_variable drained;
 
     std::vector<std::vector<int32_t>> audio_codes;
     std::mutex mutex;
@@ -955,6 +959,7 @@ struct codec_stream_worker {
         if (worker.joinable()) {
             worker.join();
         }
+        wait_drained();
 
         std::lock_guard<std::mutex> lock(mutex);
         if (failed && !error.empty()) {
@@ -974,6 +979,118 @@ struct codec_stream_worker {
         first_audio.notify_all();
         if (worker.joinable()) {
             worker.join();
+        }
+        wait_drained();
+    }
+
+    // Lockstep: chunks the batched codec still decodes deliver into this worker.
+    void wait_drained() {
+        std::unique_lock<std::mutex> lock(mutex);
+        drained.wait(lock, [&] { return inflight == 0; });
+    }
+
+    // Lockstep: the next chunk ready for the codec (as next_work reads it), or false.
+    bool take_chunk(codec_read_result& item) {
+        std::lock_guard<std::mutex> lock(mutex);
+        if (abort_requested || failed || !has_tokens_locked()) {
+            return false;
+        }
+        item = read_tokens_locked();
+        if (item.frames.empty()) {
+            return false;
+        }
+        first_chunk_taken = true;
+        ++inflight;
+        return true;
+    }
+
+    // Lockstep: a taken chunk's audio (on the batched codec's thread).
+    void deliver(decoded_chunk&& chunk) {
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            decoded.push_back(std::move(chunk));
+            --inflight;
+        }
+        has_work.notify_one();
+        drained.notify_all();
+    }
+
+    // Post-process and output one decoded chunk (metrics as decode_and_stream_chunk).
+    bool output_chunk(
+        const codec_read_result& item, const std::vector<float>& audio, int64_t t_start) {
+        const int64_t decoded_us = ggml_time_us();
+        if (metrics && metrics->codec.events == 0) {
+            metrics->codec.begin(t_start);
+        }
+        bool first = false;
+        if (metrics) {
+            metrics->record_codec_chunk(decoded_us, first);
+            const double audio_s =
+                codec.sampleRate() > 0 ? (double)audio.size() / (double)codec.sampleRate() : 0.0;
+            metrics->add_codec_work((double)(decoded_us - t_start) / 1e6, audio_s);
+        }
+        return audio_pp.writeDecodedAudio(
+            audio, item.history_frames, item.final_read,
+            [&](const std::vector<float>& processed) { return outputs.write_audio(processed); });
+    }
+
+    void run_lockstep() {
+        const ggml_nvtx::range nvtx_range("magpietts_stream_codec_worker_run");
+        auto write = [&](const std::vector<float>& processed) {
+            return outputs.write_audio(processed);
+        };
+        try {
+            for (;;) {
+                decoded_chunk chunk;
+                {
+                    std::unique_lock<std::mutex> lock(mutex);
+                    has_work.wait(lock, [&] {
+                        return abort_requested || !decoded.empty() ||
+                               (input_closed && inflight == 0 && !has_tokens_locked());
+                    });
+                    if (abort_requested || decoded.empty()) {
+                        break;
+                    }
+                    chunk = std::move(decoded.front());
+                    decoded.pop_front();
+                }
+                if (!chunk.ok) {
+                    set_failed("batched codec decode failed");
+                    return;
+                }
+                if (!output_chunk(chunk.item, chunk.audio, chunk.submitted_us)) {
+                    set_failed("audio output failed");
+                    return;
+                }
+                ++chunks_done;
+                if (chunks_done == 1) {
+                    std::lock_guard<std::mutex> lock(mutex);
+                    first_chunk_done = true;
+                    first_audio.notify_all();
+                }
+                if (chunk.item.final_read) {
+                    if (!audio_pp.flush(write)) {
+                        set_failed("failed to flush final audio");
+                        return;
+                    }
+                    std::lock_guard<std::mutex> lock(mutex);
+                    final_audio_sent = true;
+                }
+            }
+            bool should_flush = false;
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                should_flush = !abort_requested && !failed && !final_audio_sent;
+            }
+            if (should_flush && !audio_pp.flush(write)) {
+                set_failed("failed to flush overlap audio");
+            }
+        }
+        catch (const std::exception& e) {
+            set_failed(e.what());
+        }
+        catch (...) {
+            set_failed("unknown exception");
         }
     }
 
@@ -1073,6 +1190,10 @@ struct codec_stream_worker {
     }
 
     void run() {
+        if (lockstep) {
+            run_lockstep();
+            return;
+        }
         const ggml_nvtx::range nvtx_range("magpietts_stream_codec_worker_run");
         if (verbose) {
             fprintf(
@@ -1104,7 +1225,7 @@ struct codec_stream_worker {
                         codec, decoder, true_stateful ? &stream_state : nullptr, stream_graph,
                         item.frames, threads, outputs, audio_pp, metrics, run_label,
                         item.chunk_index, item.history_frames, item.final_read, verbose,
-                        decode_mutex, decode_backend, batch_codec, batch_slot)) {
+                        decode_mutex, decode_backend)) {
                     set_failed("decode or audio output failed");
                     return;
                 }
@@ -1302,10 +1423,7 @@ class MagpieRequestRunner {
         if (batch_codec_ && params.use_stateful_codec) {
             // a stream slot of the batched codec; without a free one this request decodes alone
             batch_slot_ = batch_codec_->acquire();
-            if (batch_slot_ >= 0) {
-                codec_worker_->batch_codec = batch_codec_;
-                codec_worker_->batch_slot = batch_slot_;
-            }
+            codec_worker_->lockstep = batch_slot_ >= 0;
         }
         codec_worker_->start();
         t_start_ = ggml_time_us();
@@ -1422,6 +1540,47 @@ class MagpieRequestRunner {
             codec_worker_->cancel();
         }
         releaseCodecSlot();
+    }
+    // Lockstep batched codec: hand the chunks this request completed to the batched codec,
+    // staged for the scheduler's commit after the step (or submitted at once when finishing).
+    // A final chunk is padded with silence frames, so every chunk of a batch has one shape.
+    void engineStageCodec(bool submit_now) {
+        if (!codec_worker_ || !codec_worker_->lockstep) {
+            return;
+        }
+        const int chunk = params_.chunk_frames;
+        codec_stream_worker* worker = codec_worker_.get();
+        codec_read_result item;
+        while (worker->take_chunk(item)) {
+            nc::NanoCodecFrames frames;
+            if (!make_codec_chunk(codec_.hparams(), item.frames, frames)) {
+                codec_stream_worker::decoded_chunk failed;
+                failed.item = item;
+                worker->deliver(std::move(failed));
+                return;
+            }
+            const int keep = (int)frames.size();
+            if (keep < chunk) {
+                const std::vector<int32_t> silence = worker->silence_frame();
+                nc::NanoCodecFrame pad{};
+                for (size_t c = 0; c < pad.size() && c < silence.size(); ++c) pad[c] = silence[c];
+                frames.resize((size_t)chunk, pad);
+            }
+            const int64_t submitted_us = ggml_time_us();
+            auto done = [worker, item, submitted_us](bool ok, std::vector<float>&& audio) {
+                codec_stream_worker::decoded_chunk decoded;
+                decoded.item = item;
+                decoded.ok = ok;
+                decoded.audio = std::move(audio);
+                decoded.submitted_us = submitted_us;
+                worker->deliver(std::move(decoded));
+            };
+            if (submit_now) {
+                batch_codec_->submit(batch_slot_, std::move(frames), keep, std::move(done));
+            } else {
+                batch_codec_->stage(batch_slot_, std::move(frames), keep, std::move(done));
+            }
+        }
     }
     void releaseCodecSlot() {
         if (batch_slot_ >= 0) {
@@ -2356,6 +2515,7 @@ class MagpieRequestRunner {
         } else {
             codec_worker_->close_input();
         }
+        engineStageCodec(true);  // lockstep: the last chunks, at once
         if (!codec_worker_->join()) {
             return false;
         }
@@ -2491,6 +2651,7 @@ class MagpieBatchRequestAdapter final : public IMagpieBatchRequest {
     }
 
     bool finish() override { return runner_->engineFinish(); }
+    void stageCodecChunks() override { runner_->engineStageCodec(false); }
     void abort() override { runner_->engineAbort(); }
 
    private:
@@ -2571,6 +2732,13 @@ MagpieBatchRequestFactory::MagpieBatchRequestFactory(
     : impl_(std::make_unique<Impl>(magpie, codec, codec_batch_streams, codec_chunk_frames)) {}
 
 MagpieBatchRequestFactory::~MagpieBatchRequestFactory() = default;
+
+void
+MagpieBatchRequestFactory::commitCodec() {
+    if (impl_->batch_codec) {
+        impl_->batch_codec->commit();
+    }
+}
 
 std::shared_ptr<IMagpieBatchRequest>
 MagpieBatchRequestFactory::create(

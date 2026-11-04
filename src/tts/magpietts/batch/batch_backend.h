@@ -85,6 +85,9 @@ class MagpieBatchModelBackend final : public IMagpieBatchBackend {
         size_t first, std::vector<MagpieBatchRowOutput>& out,
         std::vector<MagpieDecoderPrefillRow>& prow, MagpieDecoderPrefillTargets& targets) const;
     bool ensurePrefillHidden();
+    // Whether batched prefills may mark their slots as sharing the unconditional prefix lane:
+    // fills it from the prefill decoder's cache once that cache exists.
+    bool sharedUncondPrefix();
     // First frames of rows [first, first + n) of a batched prefill (fused kernels or the ggml
     // local transformer), on the decode stream.
     bool firstFrames(

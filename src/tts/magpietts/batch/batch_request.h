@@ -45,6 +45,10 @@ class MagpieBatchRequestFactory {
         const std::string& run_label, bool write_codes, const MagpieBatchRequestLimits& limits,
         std::string* error);
 
+    // Lockstep batched codec: hand the chunks staged since the last call to the codec as one
+    // batch (the scheduler calls it after every step).
+    void commitCodec();
+
    private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

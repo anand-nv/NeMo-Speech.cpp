@@ -54,6 +54,16 @@ struct MagpieBatchConfig {
     int threads = 4;
     // Use the fused CUDA kernels (Q8_0 models on sm_80+) when available.
     bool use_fused_kernels = true;
+    // CUDA decode-step graphs: attend to the text through one fused kernel that reads each
+    // slot's cross-attention rows in place (only its text length), instead of gathering and
+    // transposing every slot's full text capacity each step.
+    bool fused_cross_attention = true;
+    // CUDA decode-step graphs of at least shared_uncond_prefix_min_rows requests: the
+    // unconditional lanes' baked-context rows (identical for every request) are attended once for
+    // all of them from one shared arena lane (cascade attention) instead of per lane. Smaller
+    // steps gain less than the extra kernel costs.
+    bool shared_uncond_prefix = true;
+    int shared_uncond_prefix_min_rows = 32;
     // Fused-kernel contexts (streams) that run chunks of a step concurrently when a step has more
     // rows than one launch holds. Only used when every context's persistent grid fits on the GPU
     // at once; 1 runs the chunks one after another.

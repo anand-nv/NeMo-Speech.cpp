@@ -45,6 +45,7 @@ MagpieBatchEngine::init(std::string* error) {
         magpie_, codec_, config_.codec_batching ? 2 * config_.max_slots : 0,
         config_.codec_chunk_frames);
     scheduler_ = std::make_unique<MagpieBatchScheduler>(*backend_, config_);
+    scheduler_->setCodecCommit([factory = factory_.get()] { factory->commitCodec(); });
     scheduler_->start();
     return true;
 }

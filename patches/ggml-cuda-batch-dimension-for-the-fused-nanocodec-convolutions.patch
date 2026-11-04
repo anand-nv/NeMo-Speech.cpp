@@ -23,6 +23,12 @@ contiguous by CONT nodes; match that form too and read the leaky-ReLU slice
 through its view (the kernel now takes strides), so a batched activation
 runs the same fused arithmetic per element as an unbatched one.
 
+The grouped convolutions' activate-and-pack kernel transposed [cin][T] to
+[T][cin_pad] with one thread per channel, so every warp read 32 cache lines;
+batched launches spent a quarter of their codec time there. It now goes
+through a 32 x 32 shared-memory tile (coalesced reads and writes, the same
+per-element arithmetic).
+
 Upstream: stays here (the ops are project-specific; the conv_transpose_1d
 batch could go upstream with a CPU kernel).
 
@@ -39,7 +45,7 @@ index c18341fab842617604aef3b01c85d1e63a31085b..c4914038546121bd5cb746f45645e4ae
      switch (src0->type) {
          case GGML_TYPE_F16:
 diff --git a/ggml/src/ggml-cuda/conv1d-fused.cu b/ggml/src/ggml-cuda/conv1d-fused.cu
-index 849f7d34f836d1c5b36d1a505663e3a7d5b86045..3718b1b9e7e85782b41e875c34582f1e78a9b797 100644
+index 849f7d34f836d1c5b36d1a505663e3a7d5b86045..09586e3efe52d8df657abf66c391295589202671 100644
 --- a/ggml/src/ggml-cuda/conv1d-fused.cu
 +++ b/ggml/src/ggml-cuda/conv1d-fused.cu
 @@ -42,6 +42,10 @@ struct conv1d_fused_params {
@@ -53,34 +59,70 @@ index 849f7d34f836d1c5b36d1a505663e3a7d5b86045..3718b1b9e7e85782b41e875c34582f1e
      int T, cache_len, t_out, cin, cin_pad, cout, cout_pad, K, d, snake_ch;
      int chunks_per_split, n_chunks, splits;
      float slope;
-@@ -70,13 +74,14 @@ __device__ __forceinline__ void mma_16816(float (&c)[4], const unsigned (&a)[4],
+@@ -66,27 +70,45 @@ __device__ __forceinline__ void mma_16816(float (&c)[4], const unsigned (&a)[4],
+         : "r"(a[0]), "r"(a[1]), "r"(a[2]), "r"(a[3]), "r"(b[0]), "r"(b[1]));
+ }
+ 
+-// Pack and activate once per element, instead of once per output-channel tile.
++// Pack and activate once per element, instead of once per output-channel tile: [cin][T] (time
++// contiguous) becomes [T][cin_pad] (channels contiguous). A 32 x 32 shared-memory tile keeps both
++// the reads (along time) and the writes (along channels) coalesced.
++constexpr int CF_PACK_TILE = 32;
++constexpr int CF_PACK_ROWS = 8;
  __global__ void conv1d_activate_pack(conv1d_fused_params p, half * dst) {
-     const int ci = blockIdx.x * blockDim.x + threadIdx.x;
-     const int t = blockIdx.y;
+-    const int ci = blockIdx.x * blockDim.x + threadIdx.x;
+-    const int t = blockIdx.y;
 -    const int grp = blockIdx.z;
-+    const int grp = blockIdx.z % p.groups;
-+    const int b = blockIdx.z / p.groups;
-     if (ci >= p.cin_pad) return;
-     float v = 0.0f;
-     if (ci < p.cin) {
-         const int cb = (p.shared_input ? 0 : grp * p.cin) + ci;
+-    if (ci >= p.cin_pad) return;
+-    float v = 0.0f;
+-    if (ci < p.cin) {
+-        const int cb = (p.shared_input ? 0 : grp * p.cin) + ci;
 -        v = t < p.cache_len ? p.cache[(size_t)cb * p.cs + t]
 -                            : p.x[(size_t)cb * p.xs + t - p.cache_len];
-+        v = t < p.cache_len ? p.cache[(size_t)b * p.cbs + (size_t)cb * p.cs + t]
-+                            : p.x[(size_t)b * p.xbs + (size_t)cb * p.xs + t - p.cache_len];
-         if (p.alpha) {
-             if (ci < p.snake_ch) {
-                 const float sn = __sinf(p.alpha[grp * p.snake_ch + ci] * v);
-@@ -86,7 +91,7 @@ __global__ void conv1d_activate_pack(conv1d_fused_params p, half * dst) {
+-        if (p.alpha) {
+-            if (ci < p.snake_ch) {
+-                const float sn = __sinf(p.alpha[grp * p.snake_ch + ci] * v);
+-                v = v + sn * sn * p.inv_b[grp * p.snake_ch + ci];
+-            } else {
+-                v = v > 0.f ? v : v * p.slope;
++    __shared__ float tile[CF_PACK_TILE][CF_PACK_TILE + 1];
++    const int total = p.cache_len + p.T;
++    const int t0 = blockIdx.x * CF_PACK_TILE;
++    const int c0 = blockIdx.y * CF_PACK_TILE;
++    const int grp = blockIdx.z % p.groups;
++    const int b = blockIdx.z / p.groups;
++    for (int j = threadIdx.y; j < CF_PACK_TILE; j += CF_PACK_ROWS) {
++        const int ci = c0 + j;
++        const int t = t0 + threadIdx.x;
++        float v = 0.0f;
++        if (ci < p.cin && t < total) {
++            const int cb = (p.shared_input ? 0 : grp * p.cin) + ci;
++            v = t < p.cache_len ? p.cache[(size_t)b * p.cbs + (size_t)cb * p.cs + t]
++                                : p.x[(size_t)b * p.xbs + (size_t)cb * p.xs + t - p.cache_len];
++            if (p.alpha) {
++                if (ci < p.snake_ch) {
++                    const float sn = __sinf(p.alpha[grp * p.snake_ch + ci] * v);
++                    v = v + sn * sn * p.inv_b[grp * p.snake_ch + ci];
++                } else {
++                    v = v > 0.f ? v : v * p.slope;
++                }
              }
          }
++        tile[j][threadIdx.x] = v;
++    }
++    __syncthreads();
++    for (int j = threadIdx.y; j < CF_PACK_TILE; j += CF_PACK_ROWS) {
++        const int t = t0 + j;
++        const int ci = c0 + threadIdx.x;
++        if (t < total && ci < p.cin_pad) {
++            dst[(((size_t)b * p.groups + grp) * total + t) * p.cin_pad + ci] = __float2half(tile[threadIdx.x][j]);
++        }
      }
 -    dst[((size_t)grp * (p.cache_len + p.T) + t) * p.cin_pad + ci] = __float2half(v);
-+    dst[(((size_t)b * p.groups + grp) * (p.cache_len + p.T) + t) * p.cin_pad + ci] = __float2half(v);
  }
  
  constexpr int CF_MAX_REGS = 168;
-@@ -135,7 +140,13 @@ __global__ void CF_LAUNCH_BOUNDS conv1d_fused_kernel(const conv1d_fused_params p
+@@ -135,7 +157,13 @@ __global__ void CF_LAUNCH_BOUNDS conv1d_fused_kernel(const conv1d_fused_params p
      const int warp = tid >> 5;
      const int wm   = warp % WARPS_M;
      const int wn   = warp / WARPS_M;
@@ -95,7 +137,7 @@ index 849f7d34f836d1c5b36d1a505663e3a7d5b86045..3718b1b9e7e85782b41e875c34582f1e
      const int co0  = (p.groups > 1 ? (int) blockIdx.y % p.tiles_n : (int) blockIdx.y) * CF_BN;
      const int total_in = pad_g + p.T;
      const int c_begin = blockIdx.z * p.chunks_per_split;
-@@ -196,8 +207,8 @@ __global__ void CF_LAUNCH_BOUNDS conv1d_fused_kernel(const conv1d_fused_params p
+@@ -196,8 +224,8 @@ __global__ void CF_LAUNCH_BOUNDS conv1d_fused_kernel(const conv1d_fused_params p
                  const int ci = ci0 + (int) (m >> 16);
                  const int g = t0 + (int) (m & 0xffffu);
                  if (ci < p.cin) {
@@ -106,7 +148,7 @@ index 849f7d34f836d1c5b36d1a505663e3a7d5b86045..3718b1b9e7e85782b41e875c34582f1e
                  }
              }
              pf[i] = v;
-@@ -249,7 +260,7 @@ __global__ void CF_LAUNCH_BOUNDS conv1d_fused_kernel(const conv1d_fused_params p
+@@ -249,7 +277,7 @@ __global__ void CF_LAUNCH_BOUNDS conv1d_fused_kernel(const conv1d_fused_params p
                  half * dst = s_win + buf * W_CHUNK + u * CF_LDW + seg * 8;
                  const int t = cache_col0 + t0 + u;
                  if (t < p.cache_len + p.T) {
@@ -115,7 +157,7 @@ index 849f7d34f836d1c5b36d1a505663e3a7d5b86045..3718b1b9e7e85782b41e875c34582f1e
                      cp_async16(dst, src);
                  } else {
                      *reinterpret_cast<uint4 *>(dst) = make_uint4(0,0,0,0);
-@@ -350,9 +361,9 @@ __global__ void CF_LAUNCH_BOUNDS conv1d_fused_kernel(const conv1d_fused_params p
+@@ -350,9 +378,9 @@ __global__ void CF_LAUNCH_BOUNDS conv1d_fused_kernel(const conv1d_fused_params p
                  float v = p.bias ? p.bias[cout_base + co] : 0.0f;
                  for (int z = 0; z < p.splits; ++z)
                      v += p.partials[((size_t) z * tiles + tile) * (BM * CF_BN) + e];
@@ -128,7 +170,7 @@ index 849f7d34f836d1c5b36d1a505663e3a7d5b86045..3718b1b9e7e85782b41e875c34582f1e
              }
          }
          if (tid == 0) p.counters[tile] = 0;  // ready for the next launch
-@@ -362,9 +373,9 @@ __global__ void CF_LAUNCH_BOUNDS conv1d_fused_kernel(const conv1d_fused_params p
+@@ -362,9 +390,9 @@ __global__ void CF_LAUNCH_BOUNDS conv1d_fused_kernel(const conv1d_fused_params p
              const int t = t0 + m, co = co0 + n;
              if (t < p.t_out && co < p.cout) {
                  float v = s_c[m * LDC + n] + (p.bias ? p.bias[cout_base + co] : 0.0f);
@@ -141,7 +183,7 @@ index 849f7d34f836d1c5b36d1a505663e3a7d5b86045..3718b1b9e7e85782b41e875c34582f1e
              }
          }
      }
-@@ -372,8 +383,11 @@ __global__ void CF_LAUNCH_BOUNDS conv1d_fused_kernel(const conv1d_fused_params p
+@@ -372,8 +400,11 @@ __global__ void CF_LAUNCH_BOUNDS conv1d_fused_kernel(const conv1d_fused_params p
  }
  
  // launch geometry shared by the bench and the ggml op
@@ -154,7 +196,7 @@ index 849f7d34f836d1c5b36d1a505663e3a7d5b86045..3718b1b9e7e85782b41e875c34582f1e
      geometry g{};
      const int n_chunks = p.cin_pad / CF_BK;
      g.BM = p.t_out >= 64 ? 64 : 32;
-@@ -396,7 +410,7 @@ static inline geometry plan(const conv1d_fused_params & p) {
+@@ -396,7 +427,7 @@ static inline geometry plan(const conv1d_fused_params & p) {
      const int win = g.BM + padmax;
      g.smem = (size_t) (CF_STAGES * kmax * CF_BN * CF_LDB + 2 * win * CF_LDW) * sizeof(half);
      if (g.smem < (size_t) g.BM * (CF_BN + 4) * sizeof(float)) g.smem = (size_t) g.BM * (CF_BN + 4) * sizeof(float);
@@ -163,7 +205,7 @@ index 849f7d34f836d1c5b36d1a505663e3a7d5b86045..3718b1b9e7e85782b41e875c34582f1e
      return g;
  }
  
-@@ -435,18 +449,42 @@ bool ggml_cuda_conv1d_fused_supported(const ggml_tensor * op, int cc) {
+@@ -435,18 +466,42 @@ bool ggml_cuda_conv1d_fused_supported(const ggml_tensor * op, int cc) {
  // stream's buffer is reused without synchronization, and kernels on different streams never share
  // one. Counters are zero-initialized once and reset by the last block of every tile. (A per-op
  // pool allocation here caused host-side frees and stalls.)
@@ -213,7 +255,7 @@ index 849f7d34f836d1c5b36d1a505663e3a7d5b86045..3718b1b9e7e85782b41e875c34582f1e
          CUDA_CHECK(cudaFuncSetAttribute(conv1d_fused_kernel<64>, cudaFuncAttributeMaxDynamicSharedMemorySize, 96 * 1024));
          CUDA_CHECK(cudaFuncSetAttribute(conv1d_fused_kernel<32>, cudaFuncAttributeMaxDynamicSharedMemorySize, 96 * 1024));
          CUDA_CHECK(cudaFuncSetAttribute(conv1d_fused_kernel<64, true>, cudaFuncAttributeMaxDynamicSharedMemorySize, 96 * 1024));
-@@ -475,6 +513,10 @@ void ggml_cuda_op_conv1d_fused(ggml_backend_cuda_context & ctx, ggml_tensor * ds
+@@ -475,6 +530,10 @@ void ggml_cuda_op_conv1d_fused(ggml_backend_cuda_context & ctx, ggml_tensor * ds
      p.xs = (long) (x->nb[1] / sizeof(float));
      p.cs = cache ? (long) (cache->nb[1] / sizeof(float)) : 0;
      p.ys = (long) (dst->nb[1] / sizeof(float));
@@ -224,7 +266,7 @@ index 849f7d34f836d1c5b36d1a505663e3a7d5b86045..3718b1b9e7e85782b41e875c34582f1e
      p.T = (int) x->ne[0];
      p.cache_len = cache ? (int) cache->ne[0] : 0;
      p.t_out = (int) dst->ne[0];
-@@ -513,12 +555,15 @@ void ggml_cuda_op_conv1d_fused(ggml_backend_cuda_context & ctx, ggml_tensor * ds
+@@ -513,12 +572,15 @@ void ggml_cuda_op_conv1d_fused(ggml_backend_cuda_context & ctx, ggml_tensor * ds
      const ggml_tensor * residual = dst->src[6];
      p.residual = residual ? (const float *) residual->data : nullptr;
      p.rs = residual ? (long) (residual->nb[1] / sizeof(float)) : 0;
@@ -244,7 +286,7 @@ index 849f7d34f836d1c5b36d1a505663e3a7d5b86045..3718b1b9e7e85782b41e875c34582f1e
          g.splits = 1;
          g.chunks_per_split = p.n_chunks;
          g.partial_floats = 0;
-@@ -528,13 +573,13 @@ void ggml_cuda_op_conv1d_fused(ggml_backend_cuda_context & ctx, ggml_tensor * ds
+@@ -528,13 +590,15 @@ void ggml_cuda_op_conv1d_fused(ggml_backend_cuda_context & ctx, ggml_tensor * ds
      p.partials = sc.partials;
      p.counters = sc.counters;
      cudaStream_t stream = ctx.stream();
@@ -257,7 +299,9 @@ index 849f7d34f836d1c5b36d1a505663e3a7d5b86045..3718b1b9e7e85782b41e875c34582f1e
 +        ggml_cuda_pool_alloc<half> activated(ctx.pool(), (size_t)nb * p.groups * (p.cache_len + p.T) * p.cin_pad);
          p.activated = activated.get();
 -        conv1d_activate_pack<<<dim3((p.cin_pad+127)/128, p.cache_len+p.T, p.groups),128,0,stream>>>(p,activated.get());
-+        conv1d_activate_pack<<<dim3((p.cin_pad+127)/128, p.cache_len+p.T, p.groups * nb),128,0,stream>>>(p,activated.get());
++        conv1d_activate_pack<<<dim3((p.cache_len + p.T + CF_PACK_TILE - 1) / CF_PACK_TILE,
++                                    (p.cin_pad + CF_PACK_TILE - 1) / CF_PACK_TILE, p.groups * nb),
++                               dim3(CF_PACK_TILE, CF_PACK_ROWS), 0, stream>>>(p, activated.get());
          if (g.BM == 64) conv1d_fused_kernel<64, true><<<grid, CF_THREADS, g.smem, stream>>>(p);
          else            conv1d_fused_kernel<32, true><<<grid, CF_THREADS, g.smem, stream>>>(p);
      } else {

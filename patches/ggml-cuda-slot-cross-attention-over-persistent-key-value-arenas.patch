@@ -1,0 +1,403 @@
+From: Anand Joseph <anajoseph@nvidia.com>
+Subject: ggml-cuda: slot cross-attention over persistent key/value arenas
+
+
+diff --git a/ggml/include/ggml.h b/ggml/include/ggml.h
+index 21015f8a9fac02038874027836b9cb02827989e9..30ff3ec600661ed3e3753598080a971e611588b8 100644
+--- a/ggml/include/ggml.h
++++ b/ggml/include/ggml.h
+@@ -603,6 +603,7 @@ extern "C" {
+ 
+         GGML_OP_FUSED_ATTN,
+         GGML_OP_CONV1D_FUSED,
++        GGML_OP_SLOT_CROSS_ATTN,
+ 
+         GGML_OP_COUNT,
+     };
+@@ -2595,6 +2596,27 @@ extern "C" {
+             float                 scale,
+             bool                  merge_heads);
+ 
++    // Single-query cross-attention over per-slot key/value arenas (CUDA only).
++    // q: [d_k*n_head, batch] F32. k_arena/v_arena: [d_k*n_head*kv_cap, layers, slots] F32, the
++    // keys of slot s, layer `layer` being kv_cap feat-major rows. slot_ids: [batch] I32,
++    // bias: [kv_cap, batch] F32 added to the scaled scores (mask and/or log prior), kv_lens:
++    // [batch] I32, the attended rows of each item (keys past it are skipped, as if masked).
++    // Output: [d_k*n_head*batch + kv_cap*batch] F32: the attention context as a contiguous
++    // [d_k*n_head, batch] matrix, followed by the head-summed probabilities as a contiguous
++    // [kv_cap, batch] matrix (zero past kv_lens; written only when with_probs).
++    GGML_API struct ggml_tensor * ggml_slot_cross_attn(
++            struct ggml_context * ctx,
++            struct ggml_tensor  * q,
++            struct ggml_tensor  * k_arena,
++            struct ggml_tensor  * v_arena,
++            struct ggml_tensor  * slot_ids,
++            struct ggml_tensor  * bias,
++            struct ggml_tensor  * kv_lens,
++            int                   n_head,
++            int                   layer,
++            float                 scale,
++            bool                  with_probs);
++
+     // Fused causal 1-D convolution over [T, C] activations (T contiguous, CUDA only):
+     //   y[co][t] = bias[co] + sum_{ci,k} act(xcat[ci][t + k*dilation]) * w[k][ci][co]
+     // where xcat = [cache | x] along T (cache holds exactly (kernel - 1) * dilation columns, or
+diff --git a/ggml/src/ggml-cpu/ggml-cpu.c b/ggml/src/ggml-cpu/ggml-cpu.c
+index 27a4733d7d58d459b32247e4308a94219237a475..9540ad05a23a7887cb709b3299f27969d27e6b84 100644
+--- a/ggml/src/ggml-cpu/ggml-cpu.c
++++ b/ggml/src/ggml-cpu/ggml-cpu.c
+@@ -2042,6 +2042,10 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
+             {
+                 GGML_ABORT("CONV1D_FUSED has no CPU path (CUDA-only)");
+             } break;
++        case GGML_OP_SLOT_CROSS_ATTN:
++            {
++                GGML_ABORT("SLOT_CROSS_ATTN has no CPU path (CUDA-only)");
++            } break;
+         case GGML_OP_FLASH_ATTN_BACK:
+             {
+                 int32_t t = ggml_get_op_params_i32(tensor, 0);
+diff --git a/ggml/src/ggml-cpu/ggml-cpu.cpp b/ggml/src/ggml-cpu/ggml-cpu.cpp
+index efc9ebe389d73be70ea63b3384a7e58af3c3666e..86cd2edfaf1a1a18ff0d6b89acb6b5ad4efa83e8 100644
+--- a/ggml/src/ggml-cpu/ggml-cpu.cpp
++++ b/ggml/src/ggml-cpu/ggml-cpu.cpp
+@@ -441,6 +441,7 @@ static bool ggml_backend_cpu_device_supports_op(ggml_backend_dev_t dev, const st
+ 
+     switch (op->op) {
+         case GGML_OP_CONV1D_FUSED:
++        case GGML_OP_SLOT_CROSS_ATTN:
+             return false;  // CUDA-only; CPU falls back to the unfused graph
+         case GGML_OP_FUSED_ATTN:
+             return op->src[1]->type == GGML_TYPE_F32 || op->src[1]->type == GGML_TYPE_F16;
+diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
+index 84349cc1251e14e64f814de1046864b30ff63d8c..9ce66b68d7bccd67be484dca68fb6bcb8ca26d3c 100644
+--- a/ggml/src/ggml-cuda/ggml-cuda.cu
++++ b/ggml/src/ggml-cuda/ggml-cuda.cu
+@@ -29,6 +29,7 @@
+ #include "ggml-cuda/fwht.cuh"
+ #include "ggml-cuda/fused-attention.cuh"
+ #include "ggml-cuda/conv1d-fused.cuh"
++#include "ggml-cuda/slot-cross-attn.cuh"
+ #include "ggml-cuda/getrows.cuh"
+ #include "ggml-cuda/im2col.cuh"
+ #include "ggml-cuda/mmf.cuh"
+@@ -2470,6 +2471,9 @@ static bool ggml_cuda_compute_forward(ggml_backend_cuda_context & ctx, struct gg
+         case GGML_OP_CONV1D_FUSED:
+             ggml_cuda_op_conv1d_fused(ctx, dst);
+             break;
++        case GGML_OP_SLOT_CROSS_ATTN:
++            ggml_cuda_op_slot_cross_attn(ctx, dst);
++            break;
+         case GGML_OP_CROSS_ENTROPY_LOSS:
+             ggml_cuda_cross_entropy_loss(ctx, dst);
+             break;
+@@ -6357,6 +6361,8 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
+             return ggml_cuda_flash_attn_ext_supported(dev_ctx->device, op);
+         case GGML_OP_FUSED_ATTN:
+             return (op->src[0]->ne[0] & (op->src[0]->ne[0] - 1)) == 0;  // d_k power of two
++        case GGML_OP_SLOT_CROSS_ATTN:
++            return ggml_cuda_slot_cross_attn_supported(op);
+         case GGML_OP_CONV1D_FUSED:
+             return ggml_cuda_conv1d_fused_supported(op, ggml_cuda_info().devices[dev_ctx->device].cc);
+         case GGML_OP_CROSS_ENTROPY_LOSS:
+diff --git a/ggml/src/ggml-cuda/slot-cross-attn.cu b/ggml/src/ggml-cuda/slot-cross-attn.cu
+new file mode 100644
+index 0000000000000000000000000000000000000000..fd270ec1a41d0051e6a979fbee8441406ee4eac0
+--- /dev/null
++++ b/ggml/src/ggml-cuda/slot-cross-attn.cu
+@@ -0,0 +1,208 @@
++// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
++// SPDX-License-Identifier: Apache-2.0
++// GGML_OP_SLOT_CROSS_ATTN: one query per batch item attending to the key/value rows of its slot
++// in a persistent arena (see ggml_slot_cross_attn). Reads the arena in place and only the
++// item's kv_lens rows, so no per-step gather or transpose of the cached keys/values is needed.
++#include "slot-cross-attn.cuh"
++
++static constexpr int SLOT_XATTN_WARPS = 16;
++static constexpr int SLOT_XATTN_MAX_DK_PER_LANE = 8;  // d_k <= 256
++
++static __device__ __forceinline__ float slot_xattn_warp_sum(float v) {
++#pragma unroll
++    for (int offset = 16; offset > 0; offset >>= 1) {
++        v += __shfl_xor_sync(0xffffffff, v, offset);
++    }
++    return v;
++}
++
++static __device__ __forceinline__ float slot_xattn_warp_max(float v) {
++#pragma unroll
++    for (int offset = 16; offset > 0; offset >>= 1) {
++        v = fmaxf(v, __shfl_xor_sync(0xffffffff, v, offset));
++    }
++    return v;
++}
++
++// One block per batch item, heads in turn. Shared: scores [kv_cap], probs [kv_cap] (with_probs),
++// per-warp partial contexts [WARPS][d_k], per-warp reductions [WARPS].
++template <int DK_PER_LANE>
++static __global__ void __launch_bounds__(SLOT_XATTN_WARPS * WARP_SIZE)
++slot_cross_attn_kernel(
++        const float * __restrict__ q, const float * __restrict__ k_arena,
++        const float * __restrict__ v_arena, const int32_t * __restrict__ slot_ids,
++        const float * __restrict__ bias, const int32_t * __restrict__ kv_lens,
++        float * __restrict__ dst, const int feat, const int n_head, const int kv_cap,
++        const int batch, const int64_t slot_stride, const int64_t layer_offset, const float scale,
++        const bool with_probs) {
++    constexpr int d_k = DK_PER_LANE * WARP_SIZE;
++    extern __shared__ float smem[];
++    float * scores = smem;
++    float * probs = scores + kv_cap;
++    float * partial = probs + (with_probs ? kv_cap : 0);
++    float * red = partial + SLOT_XATTN_WARPS * d_k;
++
++    const int b = blockIdx.x;
++    const int warp = threadIdx.x / WARP_SIZE;
++    const int lane = threadIdx.x % WARP_SIZE;
++    const int len = max(0, min(kv_lens[b], kv_cap));
++    const int64_t base = (int64_t) slot_ids[b] * slot_stride + layer_offset;
++    const float * kb = k_arena + base;
++    const float * vb = v_arena + base;
++    const float * bb = bias + (int64_t) b * kv_cap;
++    float * out = dst + (int64_t) b * feat;
++
++    if (with_probs) {
++        for (int j = threadIdx.x; j < kv_cap; j += blockDim.x) {
++            probs[j] = 0.0f;
++        }
++    }
++
++    for (int h = 0; h < n_head; ++h) {
++        const int hd = h * d_k;
++        float qr[DK_PER_LANE];
++#pragma unroll
++        for (int i = 0; i < DK_PER_LANE; ++i) {
++            qr[i] = q[(int64_t) b * feat + hd + lane + i * WARP_SIZE];
++        }
++
++        // scores = scale * q.k_j + bias_j, one key row per warp at a time
++        float m = -INFINITY;
++        for (int j = warp; j < len; j += SLOT_XATTN_WARPS) {
++            const float * kr = kb + (int64_t) j * feat + hd;
++            float dot = 0.0f;
++#pragma unroll
++            for (int i = 0; i < DK_PER_LANE; ++i) {
++                dot += qr[i] * kr[lane + i * WARP_SIZE];
++            }
++            dot = slot_xattn_warp_sum(dot);
++            const float s = dot * scale + bb[j];
++            if (lane == 0) {
++                scores[j] = s;
++            }
++            m = fmaxf(m, s);
++        }
++        if (lane == 0) {
++            red[warp] = m;
++        }
++        __syncthreads();
++        m = lane < SLOT_XATTN_WARPS ? red[lane] : -INFINITY;
++        m = slot_xattn_warp_max(m);
++        __syncthreads();
++
++        float sum = 0.0f;
++        for (int j = threadIdx.x; j < len; j += blockDim.x) {
++            const float e = expf(scores[j] - m);
++            scores[j] = e;
++            sum += e;
++        }
++        sum = slot_xattn_warp_sum(sum);
++        if (lane == 0) {
++            red[warp] = sum;
++        }
++        __syncthreads();
++        sum = lane < SLOT_XATTN_WARPS ? red[lane] : 0.0f;
++        sum = slot_xattn_warp_sum(sum);
++        const float inv = len > 0 ? 1.0f / sum : 0.0f;
++
++        // context = sum_j p_j v_j: each warp accumulates its rows, then the warps are summed
++        float acc[DK_PER_LANE] = {};
++        for (int j = warp; j < len; j += SLOT_XATTN_WARPS) {
++            const float p = scores[j];
++            const float * vr = vb + (int64_t) j * feat + hd;
++#pragma unroll
++            for (int i = 0; i < DK_PER_LANE; ++i) {
++                acc[i] += p * vr[lane + i * WARP_SIZE];
++            }
++        }
++#pragma unroll
++        for (int i = 0; i < DK_PER_LANE; ++i) {
++            partial[warp * d_k + lane + i * WARP_SIZE] = acc[i];
++        }
++        __syncthreads();
++        for (int d = threadIdx.x; d < d_k; d += blockDim.x) {
++            float c = 0.0f;
++#pragma unroll
++            for (int w = 0; w < SLOT_XATTN_WARPS; ++w) {
++                c += partial[w * d_k + d];
++            }
++            out[hd + d] = c * inv;
++        }
++        if (with_probs) {
++            for (int j = threadIdx.x; j < len; j += blockDim.x) {
++                probs[j] += scores[j] * inv;
++            }
++        }
++        __syncthreads();
++    }
++
++    if (with_probs) {
++        float * pout = dst + (int64_t) feat * batch + (int64_t) b * kv_cap;
++        for (int j = threadIdx.x; j < kv_cap; j += blockDim.x) {
++            pout[j] = probs[j];
++        }
++    }
++}
++
++static size_t slot_cross_attn_shmem(int kv_cap, int d_k, bool with_probs) {
++    return ((size_t) kv_cap * (with_probs ? 2 : 1) + (size_t) SLOT_XATTN_WARPS * d_k +
++            SLOT_XATTN_WARPS) * sizeof(float);
++}
++
++bool ggml_cuda_slot_cross_attn_supported(const ggml_tensor * op) {
++    const int n_head = ggml_get_op_params_i32(op, 0);
++    const int64_t feat = op->src[0]->ne[0];
++    if (n_head <= 0 || feat % n_head != 0) {
++        return false;
++    }
++    const int64_t d_k = feat / n_head;
++    const int64_t per_lane = d_k / WARP_SIZE;
++    if (d_k % WARP_SIZE != 0 || per_lane > SLOT_XATTN_MAX_DK_PER_LANE || (per_lane & (per_lane - 1)) != 0) {
++        return false;
++    }
++    const int kv_cap = (int) (op->src[1]->ne[0] / feat);
++    return slot_cross_attn_shmem(kv_cap, (int) d_k, ggml_get_op_params_i32(op, 3) != 0) <= 48 * 1024;
++}
++
++void ggml_cuda_op_slot_cross_attn(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
++    const ggml_tensor * q        = dst->src[0];
++    const ggml_tensor * k_arena  = dst->src[1];
++    const ggml_tensor * v_arena  = dst->src[2];
++    const ggml_tensor * slot_ids = dst->src[3];
++    const ggml_tensor * bias     = dst->src[4];
++    const ggml_tensor * kv_lens  = dst->src[5];
++    GGML_ASSERT(ggml_cuda_slot_cross_attn_supported(dst));
++
++    const int n_head = ggml_get_op_params_i32(dst, 0);
++    const int layer = ggml_get_op_params_i32(dst, 1);
++    float scale;
++    memcpy(&scale, (const int32_t *) dst->op_params + 2, sizeof(float));
++    const bool with_probs = ggml_get_op_params_i32(dst, 3) != 0;
++
++    const int feat = (int) q->ne[0];
++    const int batch = (int) q->ne[1];
++    const int d_k = feat / n_head;
++    const int kv_cap = (int) (k_arena->ne[0] / feat);
++    const int64_t layer_offset = (int64_t) layer * (int64_t) (k_arena->nb[1] / sizeof(float));
++    const int64_t slot_stride = (int64_t) (k_arena->nb[2] / sizeof(float));
++
++    cudaStream_t stream = ctx.stream();
++    const size_t shmem = slot_cross_attn_shmem(kv_cap, d_k, with_probs);
++    const dim3 grid(batch);
++    const dim3 block(SLOT_XATTN_WARPS * WARP_SIZE);
++    auto launch = [&](auto kernel) {
++        kernel<<<grid, block, shmem, stream>>>(
++            (const float *) q->data, (const float *) k_arena->data, (const float *) v_arena->data,
++            (const int32_t *) slot_ids->data, (const float *) bias->data,
++            (const int32_t *) kv_lens->data, (float *) dst->data, feat, n_head, kv_cap, batch,
++            slot_stride, layer_offset, scale, with_probs);
++    };
++    switch (d_k / WARP_SIZE) {
++        case 1: launch(slot_cross_attn_kernel<1>); break;
++        case 2: launch(slot_cross_attn_kernel<2>); break;
++        case 4: launch(slot_cross_attn_kernel<4>); break;
++        case 8: launch(slot_cross_attn_kernel<8>); break;
++        default: GGML_ABORT("slot_cross_attn: unsupported d_k %d", d_k);
++    }
++    CUDA_CHECK(cudaGetLastError());
++}
+diff --git a/ggml/src/ggml-cuda/slot-cross-attn.cuh b/ggml/src/ggml-cuda/slot-cross-attn.cuh
+new file mode 100644
+index 0000000000000000000000000000000000000000..a370f8adad95afee9f85e6fc785712842da043d2
+--- /dev/null
++++ b/ggml/src/ggml-cuda/slot-cross-attn.cuh
+@@ -0,0 +1,6 @@
++// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
++// SPDX-License-Identifier: Apache-2.0
++#include "common.cuh"
++
++bool ggml_cuda_slot_cross_attn_supported(const ggml_tensor * op);
++void ggml_cuda_op_slot_cross_attn(ggml_backend_cuda_context & ctx, ggml_tensor * dst);
+diff --git a/ggml/src/ggml.c b/ggml/src/ggml.c
+index b1170c9482e323a94fb4988ac1b3d2488364386e..a339c3ef97ecc2ed46433cb99b810e95599d6141 100644
+--- a/ggml/src/ggml.c
++++ b/ggml/src/ggml.c
+@@ -1102,9 +1102,10 @@ static const char * GGML_OP_NAME[GGML_OP_COUNT] = {
+ 
+     "FUSED_ATTN",
+     "CONV1D_FUSED",
++    "SLOT_CROSS_ATTN",
+ };
+ 
+-static_assert(GGML_OP_COUNT == 103, "GGML_OP_COUNT != 103");
++static_assert(GGML_OP_COUNT == 104, "GGML_OP_COUNT != 104");
+ 
+ static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
+     "none",
+@@ -1220,9 +1221,10 @@ static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
+ 
+     "fused_attn(q,k,v,p)",
+     "conv1d_fused(x,w)",
++    "slot_cross_attn(q,k,v)",
+ };
+ 
+-static_assert(GGML_OP_COUNT == 103, "GGML_OP_COUNT != 103");
++static_assert(GGML_OP_COUNT == 104, "GGML_OP_COUNT != 104");
+ 
+ static_assert(GGML_OP_POOL_COUNT == 2, "GGML_OP_POOL_COUNT != 2");
+ 
+@@ -5710,6 +5712,46 @@ struct ggml_tensor * ggml_fused_attn_cached(
+         merge_heads);
+ }
+ 
++struct ggml_tensor * ggml_slot_cross_attn(
++        struct ggml_context * ctx,
++        struct ggml_tensor  * q,
++        struct ggml_tensor  * k_arena,
++        struct ggml_tensor  * v_arena,
++        struct ggml_tensor  * slot_ids,
++        struct ggml_tensor  * bias,
++        struct ggml_tensor  * kv_lens,
++        int                   n_head,
++        int                   layer,
++        float                 scale,
++        bool                  with_probs) {
++    GGML_ASSERT(q->type == GGML_TYPE_F32 && ggml_is_contiguous(q) && q->ne[2] == 1 && q->ne[3] == 1);
++    const int64_t feat  = q->ne[0];
++    const int64_t batch = q->ne[1];
++    GGML_ASSERT(n_head > 0 && feat % n_head == 0);
++    GGML_ASSERT(k_arena->type == GGML_TYPE_F32 && v_arena->type == GGML_TYPE_F32);
++    GGML_ASSERT(ggml_is_contiguous(k_arena) && ggml_are_same_shape(k_arena, v_arena));
++    GGML_ASSERT(k_arena->ne[0] % feat == 0 && k_arena->ne[3] == 1);
++    GGML_ASSERT(layer >= 0 && layer < k_arena->ne[1]);
++    const int64_t kv_cap = k_arena->ne[0] / feat;
++    GGML_ASSERT(bias->type == GGML_TYPE_F32 && ggml_is_contiguous(bias));
++    GGML_ASSERT(bias->ne[0] == kv_cap && ggml_nrows(bias) == batch);
++    GGML_ASSERT(slot_ids->type == GGML_TYPE_I32 && ggml_is_contiguous(slot_ids) && ggml_nelements(slot_ids) == batch);
++    GGML_ASSERT(kv_lens->type == GGML_TYPE_I32 && ggml_is_contiguous(kv_lens) && ggml_nelements(kv_lens) == batch);
++
++    struct ggml_tensor * result = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, (feat + kv_cap) * batch);
++    int32_t params[4] = { n_head, layer, 0, with_probs ? 1 : 0 };
++    memcpy(&params[2], &scale, sizeof(float));
++    ggml_set_op_params(result, params, sizeof(params));
++    result->op     = GGML_OP_SLOT_CROSS_ATTN;
++    result->src[0] = q;
++    result->src[1] = k_arena;
++    result->src[2] = v_arena;
++    result->src[3] = slot_ids;
++    result->src[4] = bias;
++    result->src[5] = kv_lens;
++    return result;
++}
++
+ struct ggml_tensor * ggml_conv1d_fused(
+         struct ggml_context * ctx,
+         struct ggml_tensor  * x,

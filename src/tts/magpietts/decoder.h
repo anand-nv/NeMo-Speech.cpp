@@ -216,6 +216,9 @@ class MagpieDecoder {
     // The shared unconditional hidden state of a baked-context prefill ([n_embd]), or nullptr
     // before the first prefillPair filled the cache.
     const ggml_tensor* uncondPrefillHidden() const;
+    // That cache's K/V rows (every prefill's unconditional lane gets exactly these), or nullptr
+    // before it is filled.
+    const magpietts_uncond_prefill_cache* uncondPrefillCache() const;
     bool adoptPrefill(
         const DecoderKvCache& prefetched_cond_kv, const DecoderKvCache& prefetched_uncond_kv,
         const DecoderCrossKvCache& prefetched_cross_kv, DecoderKvCache& cond_kv,
